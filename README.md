@@ -10,6 +10,8 @@ A beautiful terminal application for interacting with multiple AI models (OpenAI
 - ⚙️ Easy configuration via interactive menus
 - 🔒 Secure API key management via environment variables
 - 🧠 Agent capabilities for file system and terminal access (with safety controls)
+- 🔍 Agent mode with automatic query classification to optimize model usage
+- 🧩 Reasoning mode for complex problems with iterative self-improvement
 
 ## Installation
 
@@ -61,11 +63,17 @@ qa
 - Special commands (all commands now begin with a forward slash):
   - `/exit`: Quit the application
   - `/clear`: Clear conversation history and terminal screen
-  - `/clearscreen`: Clear only the terminal screen
+  - `/cls` or `/clearscreen`: Clear only the terminal screen
   - `/menu`: Access settings menu
+  - `/help`: Display available commands and information
+  - `/d question`: Send question directly to the powerful model (bypass routing)
   - `/fs operation:path[:content]`: File system operations (when agent is enabled)
   - `/exec command`: Execute terminal commands (when agent is enabled)
-- Use backslash (\\) at the end of a line followed by Enter/Return to continue input on a new line
+- Input features:
+  - Use up/down arrow keys to navigate through input history
+  - Use backslash (\\) at the end of a line followed by Enter/Return to continue input on a new line
+  - Press Enter on an empty line to submit multi-line input
+  - Type `/p` to enter paste mode for multiline pasting (finish with Ctrl+D)
 
 ### Agent Capabilities
 
@@ -102,19 +110,38 @@ The application stores configuration in `config.json`. You can:
 - Change the default AI provider
 - Select specific models for each provider
 - Adjust the context window size
+- Configure agent, agent mode, and reasoning mode settings
+
+## Special Modes
+
+### Agent Mode
+When enabled, this mode automatically:
+- Analyzes each query's complexity using a lightweight model
+- Routes simple queries to lightweight models (faster, cheaper)
+- Routes complex queries to powerful models (better quality)
+- Shows you which model was used for each response
+
+### Reasoning Mode
+When enabled, this mode:
+- Applies iterative self-improvement to solve complex problems
+- Breaks down problems into manageable parts
+- Goes through multiple reasoning steps to refine the answer
+- Can show intermediate reasoning steps if configured
+- Works best with complex, multi-step problems
 
 ## Supported Models
 
 ### OpenAI
-- gpt-4o (default)
+- gpt-4o (default for complex queries)
 - gpt-4-turbo
-- gpt-3.5-turbo
+- gpt-3.5-turbo (default for simple queries in agent mode)
 
 ### Anthropic
-- claude-3-7-sonnet-20250219 (default)
+- claude-3-7-sonnet-20250219 (default for complex queries)
 - claude-3-5-sonnet-20240620
 - claude-3-opus-20240229
+- claude-3-haiku-20240307 (default for simple queries in agent mode)
 
 ### Google
-- gemini-1.5-flash-latest (default)
-- gemini-1.5-pro-latest
+- gemini-2.0-flash (default for complex queries)
+- gemini-2.0-flash-lite (default for simple queries in agent mode)
