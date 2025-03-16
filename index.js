@@ -77,11 +77,23 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// Initialize Anthropic client with validation
+let anthropic;
+if (process.env.ANTHROPIC_API_KEY) {
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+} else {
+  console.warn(chalk.yellow('Warning: ANTHROPIC_API_KEY environment variable not set. Anthropic Claude will not be available.'));
+}
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+// Initialize Google AI client with validation
+let genAI;
+if (process.env.GOOGLE_API_KEY) {
+  genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+} else {
+  console.warn(chalk.yellow('Warning: GOOGLE_API_KEY environment variable not set. Google AI will not be available.'));
+}
 
 // Initialize Commander
 const program = new Command();
@@ -280,6 +292,9 @@ async function applyReasoningIterations(question, initialMessages, provider, mod
           break;
           
         case 'anthropic':
+          if (!anthropic) {
+            throw new Error('Anthropic API key not set or invalid. Please check your ANTHROPIC_API_KEY environment variable.');
+          }
           const anthropicResponse = await anthropic.messages.create({
             model: model,
             messages: reasoningContext.map(msg => ({
@@ -294,6 +309,9 @@ async function applyReasoningIterations(question, initialMessages, provider, mod
           break;
           
         case 'google':
+          if (!genAI) {
+            throw new Error('Google API key not set or invalid. Please check your GOOGLE_API_KEY environment variable.');
+          }
           const systemPrompt = reasoningContext.find(msg => msg.role === 'system')?.content || '';
           
           const googleMessages = [
@@ -342,6 +360,9 @@ async function applyReasoningIterations(question, initialMessages, provider, mod
         break;
         
       case 'anthropic':
+        if (!anthropic) {
+          throw new Error('Anthropic API key not set or invalid. Please check your ANTHROPIC_API_KEY environment variable.');
+        }
         const anthropicResponse = await anthropic.messages.create({
           model: model,
           messages: reasoningContext.map(msg => ({
@@ -356,6 +377,9 @@ async function applyReasoningIterations(question, initialMessages, provider, mod
         break;
         
       case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid. Please check your GOOGLE_API_KEY environment variable.');
+        }
         const systemPrompt = reasoningContext.find(msg => msg.role === 'system')?.content || '';
         
         const googleMessages = [
@@ -575,6 +599,12 @@ CONFIDENCE: [0.0-1.0]
         break;
         
       case 'anthropic':
+        if (!anthropic) {
+          console.error(chalk.red('Anthropic API key not set or invalid. Defaulting to complex query routing.'));
+          classification = 'COMPLEX';
+          confidence = 1.0;
+          break;
+        }
         const anthropicClassifierResponse = await anthropic.messages.create({
           model: config.lightModels.anthropic,
           messages: [
@@ -595,6 +625,12 @@ CONFIDENCE: [0.0-1.0]
         break;
         
       case 'google':
+        if (!genAI) {
+          console.error(chalk.red('Google API key not set or invalid. Defaulting to complex query routing.'));
+          classification = 'COMPLEX';
+          confidence = 1.0;
+          break;
+        }
         const googleClassifierModel = genAI.getGenerativeModel({ model: config.lightModels.google });
         const googleClassifierResponse = await googleClassifierModel.generateContent(classifierPrompt);
         
@@ -710,6 +746,9 @@ async function askAI(question) {
         break;
         
       case 'anthropic':
+        if (!anthropic) {
+          throw new Error('Anthropic API key not set or invalid. Please check your ANTHROPIC_API_KEY environment variable.');
+        }
         // Format messages for Anthropic
         const anthropicMessages = [
           {
@@ -737,6 +776,9 @@ async function askAI(question) {
         break;
         
       case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid. Please check your GOOGLE_API_KEY environment variable.');
+        }
         // Format messages for Google
         const systemPrompt = `You are a helpful AI assistant in a terminal environment. ${isDirectCmd ? 
           `For file and terminal operations, ALWAYS use the most direct approach. When asked to list files or show directory contents, use the {{agent:exec:ls -la /path}} or {{agent:fs:list:/path}} syntax immediately without unnecessary explanation. Be concise and action-oriented.` : 
@@ -1071,6 +1113,13 @@ async function configureSettings() {
       google: ['gemini-2.0-flash-lite']
     };
     
+    // Check if Google is selected but API key is not set
+    if (answers.provider === 'google' && !process.env.GOOGLE_API_KEY) {
+      console.log(chalk.red('Warning: GOOGLE_API_KEY environment variable is not set.'));
+      console.log(chalk.yellow('You will need to set the GOOGLE_API_KEY environment variable to use Google AI.'));
+      console.log(chalk.yellow('Please set it in your .env file or export it in your shell.'));
+    }
+    
     const lightModelAnswer = await inquirer.prompt([
       {
         type: 'list',
@@ -1168,6 +1217,18 @@ async function configureSettings() {
     google: ['gemini-2.0-flash']
   };
   
+  // Check API keys for the selected provider again before model selection
+  if (answers.provider === 'openai' && !process.env.OPENAI_API_KEY) {
+    console.log(chalk.red('Warning: OPENAI_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('You will need to set the OPENAI_API_KEY environment variable to use OpenAI.'));
+  } else if (answers.provider === 'anthropic' && !process.env.ANTHROPIC_API_KEY) {
+    console.log(chalk.red('Warning: ANTHROPIC_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('You will need to set the ANTHROPIC_API_KEY environment variable to use Anthropic Claude.'));
+  } else if (answers.provider === 'google' && !process.env.GOOGLE_API_KEY) {
+    console.log(chalk.red('Warning: GOOGLE_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('You will need to set the GOOGLE_API_KEY environment variable to use Google AI.'));
+  }
+  
   const modelAnswer = await inquirer.prompt([
     {
       type: 'list',
@@ -1193,6 +1254,22 @@ async function configureSettings() {
 // Interactive chat mode
 async function startChatMode() {
   displayLogo();
+  
+  // Check if API key is set for the current provider
+  if (config.currentProvider === 'openai' && !process.env.OPENAI_API_KEY) {
+    console.log(chalk.red('Error: OPENAI_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('Please set it in your .env file or export it in your shell.'));
+    console.log(chalk.yellow('Use the /menu command to switch to a different provider or exit and set the key.'));
+  } else if (config.currentProvider === 'anthropic' && !process.env.ANTHROPIC_API_KEY) {
+    console.log(chalk.red('Error: ANTHROPIC_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('Please set it in your .env file or export it in your shell.'));
+    console.log(chalk.yellow('Use the /menu command to switch to a different provider or exit and set the key.'));
+  } else if (config.currentProvider === 'google' && !process.env.GOOGLE_API_KEY) {
+    console.log(chalk.red('Error: GOOGLE_API_KEY environment variable is not set.'));
+    console.log(chalk.yellow('Please set it in your .env file or export it in your shell.'));
+    console.log(chalk.yellow('Use the /menu command to switch to a different provider or exit and set the key.'));
+  }
+  
   console.log(chalk.cyan(`Current provider: ${chalk.bold(config.currentProvider)}`));
   
   // Show different model info based on agent mode
