@@ -3,12 +3,14 @@
   "models": {
     "openai": "gpt-4o",
     "anthropic": "claude-3-7-sonnet-20250219",
-    "google": "gemini-2.0-flash"
+    "google": "gemini-2.0-flash",
+    "openrouter": "deepseek/deepseek-chat"
   },
   "lightModels": {
     "openai": "gpt-3.5-turbo",
     "anthropic": "claude-3-haiku-20240307",
-    "google": "gemini-2.0-flash-lite"
+    "google": "gemini-2.0-flash-lite",
+    "openrouter": "deepseek/deepseek-r1:free"
   },
   "maxContextMessages": 100,
   "agentMode": {
@@ -17,14 +19,14 @@
   },
   "reasoningMode": {
     "enabled": true,
-    "iterations": 3,
-    "showIntermediate": true
+    "iterations": 2,
+    "showIntermediate": false
   },
   "agent": {
     "enabled": true,
-    "useVirtualEnvironment": true,
+    "useVirtualEnvironment": false,
     "allowedDirectories": [
-      "/Users/leland/Documents"
+      "/Users/leland/"
     ],
     "disallowedCommands": [
       "rm -rf",
@@ -38,5 +40,52 @@
       "curl | bash",
       "wget | bash"
     ]
+  },
+  "codingMode": {
+    "enabled": true,
+    "maxContextMessages": 500,
+    "projectContextFile": "ai.md",
+    "currentContextFile": "current.md",
+    "lastCompacted": null
+  },
+  "agentic": {
+    "enabled": true,
+    "usePowerfulConductor": true,
+    "maxConcurrentAgents": 5,
+    "maxActionsPerAgent": 100,
+    "autoDetect": true,
+    "taskTypes": [
+      "research",
+      "code",
+      "analyze",
+      "write",
+      "summarize",
+      "filesystem"
+    ],
+    "parallelFilesystemOperations": true,
+    "maxParallelFileReads": 10,
+    "directoryAnalysisChunkSize": 5
+  },
+  "availableGeminiModels": {
+    "complex": [
+      "gemini-2.5-pro-exp-03-25",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
+      "gemini-1.5-pro"
+    ],
+    "light": [
+      "gemini-2.0-flash-lite",
+      "gemini-1.5-flash-8b"
+    ],
+    "embedding": [
+      "gemini-embedding-exp"
+    ]
+  },
+  "directMode": {
+    "enabled": true,
+    "skipReasoning": true
+  },
+  "smartMode": {
+    "enabled": false
   }
 }
