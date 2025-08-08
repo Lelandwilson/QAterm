@@ -59,6 +59,59 @@ if (process.env.OPENROUTER_API_KEY) {
   });
 }
 
+// Track last outputs for copy actions
+let lastAIResponse = '';
+let sessionTranscript = [];
+
+// Utility: strip ANSI sequences for clean copying
+function stripAnsi(input) {
+  if (!input) return '';
+  // Regex covers color codes and some cursor control
+  return input
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/\x1B\][^\x07]*\x07/g, '') // OSC sequences
+    .replace(/\x1B\[[\?0-9;]*[hl]/g, ''); // mode set/reset
+}
+
+// Best-effort clipboard copy across OSes
+async function copyToClipboard(text) {
+  return new Promise((resolve, reject) => {
+    const platform = process.platform;
+    const cleaned = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
+    let cmd;
+    if (platform === 'darwin') {
+      cmd = 'pbcopy';
+    } else if (platform === 'win32') {
+      cmd = 'clip';
+    } else {
+      // Try xclip, then wl-copy
+      cmd = 'bash -lc "(command -v xclip >/dev/null 2>&1 && xclip -selection clipboard) || (command -v wl-copy >/dev/null 2>&1 && wl-copy)"';
+    }
+    const child = exec(cmd, (err) => {
+      if (err) {
+        // Fallback: write to file so user can access
+        try {
+          const fallback = path.join(process.cwd(), 'clipboard.txt');
+          fs.writeFileSync(fallback, cleaned, 'utf8');
+          return resolve({ copied: false, fallback });
+        } catch (e) {
+          return reject(err);
+        }
+      }
+      resolve({ copied: true });
+    });
+    child.stdin && child.stdin.end(cleaned);
+  });
+}
+
+// Enable terminal bracketed paste at startup and disable on exit
+function enableBracketedPaste() {
+  try { process.stdout.write('\x1b[?2004h'); } catch {}
+}
+function disableBracketedPaste() {
+  try { process.stdout.write('\x1b[?2004l'); } catch {}
+}
+
 // Add an enhanced paste mode function
 globalThis.enhancedPasteMode = async () => {
   return new Promise((resolve) => {
@@ -74,35 +127,46 @@ globalThis.enhancedPasteMode = async () => {
     
     let buffer = '';
     
+    let bracketPasting = false;
     const dataHandler = (chunk) => {
-      const data = chunk.toString();
-      
-      // Check for Cmd+/ keypress - might appear as "/" with the command modifier
-      // Also check for explicit \\end marker
-      if ((data.includes('/') && process.stdin.isRaw) || 
-          data.trim() === '\\end' || 
-          data.includes('\\end\n') || 
-          data.includes('\\end\r\n')) {
-        // Remove the marker and finish
+      const data = chunk.toString('utf8');
+
+      // Detect terminal bracketed paste sequences
+      if (data.includes('\u001b[200~')) {
+        bracketPasting = true;
+        // Strip the start marker and keep the rest
+        buffer += data.replace(/\u001b\[200~/g, '');
+        return;
+      }
+      if (bracketPasting) {
+        // Check for end marker
+        if (data.includes('\u001b[201~')) {
+          const beforeEnd = data.replace(/\u001b\[201~/g, '');
+          buffer += beforeEnd;
+          bracketPasting = false;
+          cleanup();
+          resolve(buffer);
+          return;
+        }
+        buffer += data;
+        return;
+      }
+
+      // Check for Cmd+/ or explicit \end markers
+      if (data.trim() === '\\end' || data.includes('\\end\n') || data.includes('\\end\r\n')) {
         let cleanedBuffer = buffer;
         if (data.trim() === '\\end') {
-          // Remove the entire \\end line
           cleanedBuffer = buffer.replace(/\\end$/, '');
         } else if (data.includes('\\end\n')) {
           cleanedBuffer = buffer.replace(/\\end\n/, '');
         } else if (data.includes('\\end\r\n')) {
           cleanedBuffer = buffer.replace(/\\end\r\n/, '');
-        } else if (data.includes('/')) {
-          // Just add everything before the slash
-          cleanedBuffer = buffer + data.split('/')[0];
         }
-        
         cleanup();
         resolve(cleanedBuffer);
         return;
       }
-      
-      // Add to buffer
+
       buffer += data;
     };
     
@@ -166,6 +230,10 @@ process.exit = (code) => {
   }
   originalExit(code);
 };
+
+// Also ensure bracketed paste disabled on exit
+process.on('exit', disableBracketedPaste);
+process.on('SIGINT', () => { disableBracketedPaste(); });
 
 // DirectoryAnalyzer instance will be created after class definition
 
@@ -2123,7 +2191,11 @@ function formatAIResponse(text) {
   }
 
   // Return text directly without boxen borders for easier copy/paste
-  return text;
+  const out = text;
+  // Track last AI response and session transcript for copying
+  lastAIResponse = out;
+  sessionTranscript.push(stripAnsi(out));
+  return out;
 }
 
 // Process tool_code blocks in AI responses
@@ -2163,7 +2235,9 @@ function processToolCodeBlocks(text) {
 
 // Format user messages for display
 function formatUserMessage(text) {
-  return chalk.green('You: ') + chalk.white(text);
+  const rendered = chalk.green('You: ') + chalk.white(text);
+  sessionTranscript.push(`You: ${text}`);
+  return rendered;
 }
 
 // Agent capabilities - file system operations
@@ -3730,6 +3804,10 @@ async function startChatMode() {
   console.log(chalk.yellow('Type "\\p" or "\\paste" to enter multiline paste mode'));
   console.log(chalk.yellow('In paste mode, type "\\end" on a new line to finish pasting'));
   console.log(chalk.yellow('Use \\ at the end of a line + Enter for multi-line input'));
+  console.log(chalk.yellow('Hotkeys: F8 copies last AI response to clipboard'));
+
+  // Enable bracketed paste for robust multiline paste handling
+  enableBracketedPaste();
   
   // Show new file operation functionality
   console.log(chalk.yellow('Auto-file-saving: AI can save files with ```tool_code {{agent:fs:write:file:content}} ``` syntax\n'));
@@ -3788,6 +3866,34 @@ async function startChatMode() {
       let isPasting = false;
       let startTime = 0;
       
+      // Bracketed paste handling at the tty data level
+      let bracketPasting = false;
+      let bracketBuffer = '';
+      const dataListener = (chunk) => {
+        const s = chunk.toString('utf8');
+        if (s.includes('\u001b[200~')) {
+          bracketPasting = true;
+          bracketBuffer += s.replace(/\u001b\[200~/g, '');
+          return;
+        }
+        if (bracketPasting) {
+          if (s.includes('\u001b[201~')) {
+            bracketBuffer += s.replace(/\u001b\[201~/g, '');
+            bracketPasting = false;
+            // Submit the entire pasted content as one entry
+            rl.line = bracketBuffer;
+            rl.cursor = rl.line.length;
+            bracketBuffer = '';
+            // Emit line to resolve the prompt with this content
+            setImmediate(() => rl.emit('line'));
+            return;
+          }
+          bracketBuffer += s;
+          return;
+        }
+      };
+      rl.input.on('data', dataListener);
+
       // Handle up and down arrow keys for history navigation
       rl.on('line', (line) => {
         // Save the entered line to restore it when navigating history
@@ -3805,7 +3911,26 @@ async function startChatMode() {
       rl.input.on('keypress', (char, key) => {
         if (!key && !char) return;
         
-        // No paste detection logic - users must use \p or \paste command
+        // Hotkey: F8 copies last AI response to clipboard
+        if (key && key.name === 'f8') {
+          const content = stripAnsi(lastAIResponse || '');
+          copyToClipboard(content).then((res) => {
+            if (res.copied) {
+              console.log(chalk.green('\n✓ Copied last AI response to clipboard'));
+            } else if (res.fallback) {
+              console.log(chalk.yellow(`\nSaved last AI response to ${res.fallback}`));
+            }
+            // Repaint the prompt line after message
+            if (prompt.ui.activePrompt && prompt.ui.activePrompt.opt.rl._refreshLine) {
+              prompt.ui.activePrompt.opt.rl._refreshLine.call(rl);
+            } else {
+              rl._refreshLine();
+            }
+          }).catch(() => {
+            console.log(chalk.red('\nFailed to copy to clipboard'));
+          });
+          return;
+        }
         
         // Handle up arrow key - navigate backward in history
         if (key && key.name === 'up') {
@@ -3884,6 +4009,7 @@ async function startChatMode() {
       
       // Remove event listeners to prevent duplicates in next iteration
       rl.input.removeAllListeners('keypress');
+      rl.input.removeListener('data', dataListener);
       rl.removeAllListeners('line');
       rl.removeAllListeners('SIGINT');
     }
@@ -3950,6 +4076,42 @@ async function startChatMode() {
       console.clear();
       displayLogo();
       console.log(chalk.yellow('Terminal screen cleared!'));
+      continue;
+    } else if (question.toLowerCase() === '/copy' || question.toLowerCase() === '/copy-last') {
+      // Copy last AI response to clipboard
+      const content = stripAnsi(lastAIResponse || '');
+      if (!content) {
+        console.log(chalk.yellow('No AI response to copy yet.'));
+        continue;
+      }
+      try {
+        const res = await copyToClipboard(content);
+        if (res.copied) {
+          console.log(chalk.green('✓ Copied last AI response to clipboard'));
+        } else if (res.fallback) {
+          console.log(chalk.yellow(`Clipboard helper unavailable. Saved to ${res.fallback}`));
+        }
+      } catch (err) {
+        console.log(chalk.red('Failed to copy to clipboard')); 
+      }
+      continue;
+    } else if (question.toLowerCase() === '/copy-all' || question.toLowerCase() === '/copy-session') {
+      // Copy session transcript
+      const all = stripAnsi(sessionTranscript.join('\n'));
+      if (!all.trim()) {
+        console.log(chalk.yellow('Nothing to copy yet.'));
+        continue;
+      }
+      try {
+        const res = await copyToClipboard(all);
+        if (res.copied) {
+          console.log(chalk.green('✓ Copied session transcript to clipboard'));
+        } else if (res.fallback) {
+          console.log(chalk.yellow(`Clipboard helper unavailable. Saved to ${res.fallback}`));
+        }
+      } catch (err) {
+        console.log(chalk.red('Failed to copy session to clipboard'));
+      }
       continue;
     } else if (question.toLowerCase() === '/compact' || question.toLowerCase() === '/co') {
       // Compact the conversation in coding mode
