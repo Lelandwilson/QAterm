@@ -14,6 +14,7 @@ A beautiful terminal application for interacting with multiple AI models (OpenAI
 - 🧩 Reasoning mode for complex problems with iterative self-improvement
 - 💻 Coding mode with project-specific context management and conversation summarization
 - 🚀 Agentic mode with multi-threaded parallel task execution and conductor-worker architecture
+- 🔎 Automatic local project scan: for queries like “what can you tell me about X in this app?”, QAterm non-destructively scans your repo (README, entrypoints, grep for keywords) and summarizes findings before calling an AI
 
 ## Installation
 
@@ -63,17 +64,23 @@ qa
 ### In Chat Mode
 
 - Type your questions and get AI responses
+- You can start the app quietly with `--qs` (or `--quiet-start`) to suppress the banner and startup text; it will print `<Connected>`
 - Special commands (all commands now begin with a backslash):
   - `\exit`: Quit the application
   - `\clear`: Clear conversation history and terminal screen
   - `\cls` or `\clearscreen`: Clear only the terminal screen
   - `\menu`: Access settings menu
   - `\help`: Display available commands and information
+  - `\visual` or `\v`: Open visual tri‑pane (files | chat | preview). Inside: press `V` to toggle tri‑pane, `C` to ask AI
   - `\d question`: Send question directly to the powerful model (bypass routing)
   - `\direct` or `\dr`: Toggle direct mode (always use powerful model)
   - `\directfast` or `\df`: Toggle fast direct mode (powerful model with reasoning disabled)
   - `\fs operation:path[:content]`: File system operations (when agent is enabled)
   - `\exec command`: Execute terminal commands (when agent is enabled)
+  - `\copy` or `\copy-last`: Copy last AI response to clipboard
+  - `\copy-all` or `\copy-session`: Copy entire session transcript to clipboard
+
+Supported models include latest OpenAI options (e.g., `gpt-5`). Use `\menu` to select provider and model interactively.
   
 #### Coding Mode Commands
   - `\compact`: Summarize the current conversation to preserve context
@@ -82,6 +89,7 @@ qa
   
 #### Agentic Mode Commands
   - `\agentic` or `\schedule`: Toggle agentic mode on/off
+  - Prefix a query with `\a` (or `\agent`, `\agentic`) to run that single query using agentic multi-agent execution
   - `\task <description>`: Create a new task with parallel agents
   - `\smart-conductor`: Toggle using a powerful model as task conductor
   - `\continue`: Grant permission to agents to continue working
@@ -92,8 +100,8 @@ qa
   - Use up/down arrow keys to navigate through input history
   - Use backslash (\\) at the end of a line followed by Enter/Return to continue input on a new line
   - Press Enter on an empty line to submit multi-line input
-  - Type `\p` to enter paste mode for multiline pasting (finish with Ctrl+D)
-  - Multiline pasting is detected automatically for convenience
+  - Type `\p` to enter paste mode for multiline pasting (finish with `\\end` on a new line; Windows: `Ctrl+Z` then Enter)
+  - Multiline pasting is detected automatically when your terminal supports bracketed paste
 
 ### Agent Capabilities
 
@@ -114,6 +122,43 @@ When enabled, the AI can interact with your file system and terminal:
   - Disallowed command patterns for terminal execution
   - Virtual environment option for sandboxed execution
   - Uses current working directory by default
+  - Auto‑approval (safe): When enabled, non‑destructive FS ops (`read`, `list`, `exists`) can be auto‑approved. In Visual mode, safe ops suggested by the AI are executed silently and results are rendered in the Chat pane.
+
+### Automatic Local Scan (Non-destructive)
+- What it does: When you ask about a feature in “this app/project” (e.g., “what can you tell me about the fzf feature in this app?”), QAterm will:
+  - Detect if you’re inside a project
+  - Inspect docs and entrypoints (README.md, HELP.txt, index.js, package.json main)
+  - Run a safe grep across the repo (excluding node_modules/.git) to find references
+  - Return snippets grouped by file, without modifying anything
+- Toggle: Enabled by default via `autoActions.localSearchBeforeAI` in `config.json`.
+- Tip: Use `\review .` for a deeper parallel analysis if grep returns little.
+
+### Visual Mode (Tri‑pane)
+Open with `\visual` (alias `\v`).
+
+- Layout: Files (left), Preview (middle; wrapped), Chat (right; wrapped)
+- Controls:
+  - `Tab`/`Shift+Tab`: Cycle focus (Files → Preview → Chat)
+  - `C`: Ask AI (inline prompt inside Chat pane; Esc cancels). The selected file’s path and a short preview are included automatically so you can talk about it immediately
+  - `V`: Toggle three‑pane layout on/off
+  - `S`: Toggle Auto‑scan (toast shown; saved to config)
+  - `PgUp`/`PgDn`, `↑`/`↓`: Scroll Chat/Preview when focused
+- Notes:
+  - Startup banner shows a status row: Auto‑scan, Agentic, Provider
+  - Auto‑scan runs only for questions explicitly scoped to “this app/project/repo/codebase/directory” or when you say “review”
+
+#### Edit View (single file)
+- From Visual mode, select a file and press `E` to open the editor view.
+- Layout: Editor (left; Vim‑like) and AI Chat (right).
+- Modes and keys:
+  - Normal: `h/j/k/l` move, `i` insert, `o` open line below, `G` end, `:w` save, `:q` quit, `:wq` save+quit
+  - Insert: type to edit, Enter to split line, Backspace to merge/delete, `Esc` returns to Normal
+  - Paging: `Ctrl‑f`/`Ctrl‑b` page down/up
+  - Help: `?` toggles a contextual help bar with the most useful keys for the current mode
+- AI collaboration:
+  - Press `C` to enter an instruction for the AI (e.g., “convert var to const and fix lint”).
+  - The AI previews changes by sending a full file update; the buffer updates immediately. Save with `:w` to write.
+  - Safe FS ops (read/list/exists) from the AI are auto‑approved; destructive changes still require saving.
 
 ## Global Installation
 

@@ -142,18 +142,3 @@ function setupTerminal() {
 
 // Export both functions
 export { setupTabCompletion, setupTerminal };
-
-// Add this to your command handling function (likely in processCommand or similar)
-if (command === '\\home') {
-  // Get the first allowed directory as the home directory
-  const homeDir = config.agent.allowedDirectories[0];
-  if (homeDir) {
-    // Change to the home directory
-    process.chdir(homeDir);
-    return `Changed directory to home: ${homeDir}`;
-  } else {
-    return "No home directory configured. Please add one to agent.allowedDirectories in config.json.";
-  }
-}
-
-// ... existing code ... 

@@ -1,1 +1,37 @@
-[]
+[
+  {
+    "id": "5031a109-50b6-4adc-979a-3eca7a92aae9",
+    "description": "please list file in this directory",
+    "created": 1754618897552,
+    "completed": 1754618909131,
+    "status": "completed"
+  },
+  {
+    "id": "6d2965ec-664e-45ee-9bec-17954065b30a",
+    "description": "please navigate to ~/Documents, create a directory call test123, then crate a .md file in it wth a demo conetese that actually uses markdown",
+    "created": 1754624939038,
+    "completed": 1754624947739,
+    "status": "completed"
+  },
+  {
+    "id": "9c144641-ff10-4f41-a4ee-02f74c0b9cbe",
+    "description": "please navigate to ~/Documents, create a directory call test123, then crate a .md file in it wth a demo conetese that actually uses markdown",
+    "created": 1754625019806,
+    "completed": 1754625031086,
+    "status": "completed"
+  },
+  {
+    "id": "bb4240b4-9961-481d-9fac-847a7493c0ea",
+    "description": "create a new project in ~/Documents/02_projects/test45/ in here we will start anew coding excercise, so create a .gitignore file",
+    "created": 1754626117258,
+    "completed": 1754626129893,
+    "status": "completed"
+  },
+  {
+    "id": "9f4ad110-64b0-4c63-9f2f-22bac7a31c9e",
+    "description": "ok, great, now build me a realy smart looking SPA as a demo of your abiltiys, it should look clean and modern. Use react and express- install all required node libs",
+    "created": 1754627348103,
+    "completed": 1754627386047,
+    "status": "completed"
+  }
+]

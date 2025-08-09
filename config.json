@@ -1,7 +1,7 @@
 {
-  "currentProvider": "google",
+  "currentProvider": "openai",
   "models": {
-    "openai": "gpt-4o",
+    "openai": "gpt-5",
     "anthropic": "claude-3-7-sonnet-20250219",
     "google": "gemini-2.0-flash",
     "openrouter": "deepseek/deepseek-chat"
@@ -25,6 +25,8 @@
   "agent": {
     "enabled": true,
     "useVirtualEnvironment": false,
+    "autoApproveExec": true,
+    "autoApproveFsSafe": true,
     "allowedDirectories": [
       "/Users/leland/"
     ],
@@ -53,7 +55,8 @@
     "usePowerfulConductor": true,
     "maxConcurrentAgents": 5,
     "maxActionsPerAgent": 100,
-    "autoDetect": true,
+    "defaultTimeout": 300000,
+    "taskHistoryFile": "task-history.json",
     "taskTypes": [
       "research",
       "code",
@@ -62,9 +65,17 @@
       "summarize",
       "filesystem"
     ],
+    "historyPath": "/Users/leland/Dropbox/My Mac (MacBook Pro)/Documents/02_projects/QAterm",
+    "autoDetect": true,
     "parallelFilesystemOperations": true,
     "maxParallelFileReads": 10,
     "directoryAnalysisChunkSize": 5
+  },
+  "autoActions": {
+    "localSearchBeforeAI": true,
+    "maxGrepHits": 80,
+    "maxSnippetsPerFile": 2,
+    "snippetContext": 2
   },
   "availableGeminiModels": {
     "complex": [
