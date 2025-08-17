@@ -6563,6 +6563,31 @@ program
   });
 
 // Parse command line arguments
+program
+  .option('--whatmodes', 'Display available modes and startup arguments')
+  .action((options) => {
+    if (options.whatmodes) {
+      console.log(chalk.bold.green('Available Modes and Startup Arguments:'));
+      console.log('');
+      console.log(chalk.bold('Normal Mode:'));
+      console.log('  No special arguments needed.');
+      console.log('');
+      console.log(chalk.bold('Fast Answers Mode:'));
+      console.log('  --fa, --fast-answers');
+      console.log('');
+      console.log(chalk.bold('Nvim Help Mode:'));
+      console.log('  --nvim, --nvim-help');
+      console.log('');
+      console.log(chalk.bold('Vocabulary Mode:'));
+      console.log('  --vocab, --vocabulary');
+      console.log('');
+      console.log(chalk.bold('Quiet Start:'));
+      console.log('  --qs, --quiet-start');
+      console.log('');
+      process.exit(0);
+    }
+  });
+
 program.parse(process.argv);
 
 // Configure file/terminal agent settings
