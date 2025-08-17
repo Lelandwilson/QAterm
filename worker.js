@@ -71,7 +71,7 @@ Execute the current action carefully and provide your result. Format your respon
             { role: 'system', content: `You are an AI agent specialized in ${agent.type} tasks.` },
             { role: 'user', content: actionPrompt }
           ],
-          temperature: 0.7,
+          ...(!(agent.model && typeof agent.model === 'string' && agent.model.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
         });
         
         actionResponse = openaiResponse.choices[0].message.content;

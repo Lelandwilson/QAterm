@@ -1,0 +1,82 @@
+{
+  "navigation": {
+    "h": "Move cursor left",
+    "j": "Move cursor down",
+    "k": "Move cursor up", 
+    "l": "Move cursor right",
+    "w": "Move to start of next word",
+    "b": "Move to start of previous word",
+    "e": "Move to end of current word",
+    "0": "Move to beginning of line",
+    "$": "Move to end of line",
+    "gg": "Go to first line",
+    "G": "Go to last line",
+    "Ctrl+f": "Page down",
+    "Ctrl+b": "Page up",
+    "Ctrl+d": "Half page down",
+    "Ctrl+u": "Half page up"
+  },
+  "editing": {
+    "i": "Enter insert mode",
+    "a": "Enter insert mode after cursor",
+    "I": "Enter insert mode at beginning of line",
+    "A": "Enter insert mode at end of line",
+    "o": "Open new line below and enter insert mode",
+    "O": "Open new line above and enter insert mode",
+    "x": "Delete character under cursor",
+    "X": "Delete character before cursor",
+    "dd": "Delete current line",
+    "dw": "Delete word",
+    "cw": "Change word (delete and enter insert mode)",
+    "ciw": "Change inner word (delete word under cursor and enter insert mode)",
+    "cc": "Change line (delete line and enter insert mode)",
+    "yy": "Yank (copy) current line",
+    "yw": "Yank word",
+    "p": "Paste after cursor",
+    "P": "Paste before cursor",
+    "u": "Undo",
+    "Ctrl+r": "Redo",
+    "r": "Replace single character",
+    "s": "Substitute character (delete and enter insert mode)"
+  },
+  "search": {
+    "/": "Search forward",
+    "?": "Search backward", 
+    "n": "Go to next search result",
+    "N": "Go to previous search result",
+    "*": "Search for word under cursor (forward)",
+    "#": "Search for word under cursor (backward)",
+    "<leader>h": "Clear search highlight"
+  },
+  "visual": {
+    "v": "Enter visual mode",
+    "V": "Enter visual line mode",
+    "Ctrl+v": "Enter visual block mode",
+    "d": "Delete selected text",
+    "y": "Yank (copy) selected text",
+    "c": "Change selected text"
+  },
+  "modes": {
+    "Esc": "Return to normal mode",
+    ":": "Enter command mode",
+    ":w": "Save file",
+    ":q": "Quit",
+    ":wq": "Save and quit",
+    ":q!": "Quit without saving"
+  },
+  "chatgpt": {
+    "<leader>c": "Open ChatGPT",
+    "<leader>cf": "Fix Bugs",
+    "<leader>cx": "Explain Code",
+    "<leader>cs": "Summarize",
+    "<leader>ct": "Translate",
+    "<leader>cd": "Docstring",
+    "<leader>co": "Optimize Code"
+  },
+  "window": {
+    "<c-k>": "Move to the window above",
+    "<c-j>": "Move to the window below",
+    "<c-h>": "Move to the window to the left",
+    "<c-l>": "Move to the window to the right"
+  }
+}
