@@ -14,7 +14,7 @@
   },
   "maxContextMessages": 100,
   "agentMode": {
-    "enabled": true,
+    "enabled": false,
     "routingThreshold": 0.7
   },
   "reasoningMode": {
@@ -98,5 +98,22 @@
   },
   "smartMode": {
     "enabled": false
+  },
+  "fastAnswersMode": {
+    "enabled": false,
+    "maxContextMessages": 5,
+    "disableReasoning": true,
+    "useLightModel": true
+  },
+  "nvimHelpMode": {
+    "enabled": false,
+    "keybindingsFile": "nvim-keybindings.json",
+    "packagesFile": "nvim-packages.json",
+    "maxContextMessages": 10
+  },
+  "vocabMode": {
+    "enabled": false,
+    "maxContextMessages": 3,
+    "focusAreas": ["spelling", "grammar", "vocabulary", "professionalism", "clarity"]
   }
 }

@@ -40,8 +40,11 @@ const installDir = __dirname;
 // Save the caller's working directory
 const callerDir = process.cwd();
 
-// Quiet-start flag (also exposed via Commander option)
+// Startup mode flags (also exposed via Commander options)
 const quietStart = process.argv.includes('--qs') || process.argv.includes('--quiet-start');
+const fastAnswersMode = process.argv.includes('--fa') || process.argv.includes('--fast-answers');
+const nvimHelpMode = process.argv.includes('--nvim') || process.argv.includes('--nvim-help');
+const vocabMode = process.argv.includes('--vocab') || process.argv.includes('--vocabulary');
 
 // Change to the caller's directory to operate from there (suppress in quiet mode)
 if (!quietStart) {
@@ -3770,9 +3773,17 @@ async function askAI(question, options = {}) {
     // Add question to history
     messageHistory.push({ role: 'user', content: question });
     
-    // Limit history to the configured max context window
-    const maxMessages = config.codingMode.enabled ? 
-      config.codingMode.maxContextMessages : config.maxContextMessages;
+    // Limit history to the configured max context window based on active mode
+    let maxMessages = config.maxContextMessages;
+    if (config.codingMode.enabled) {
+      maxMessages = config.codingMode.maxContextMessages;
+    } else if (config.fastAnswersMode.enabled) {
+      maxMessages = config.fastAnswersMode.maxContextMessages;
+    } else if (config.nvimHelpMode.enabled) {
+      maxMessages = config.nvimHelpMode.maxContextMessages;
+    } else if (config.vocabMode.enabled) {
+      maxMessages = config.vocabMode.maxContextMessages;
+    }
     
     if (messageHistory.length > maxMessages * 2) {
       // If we have project context or previous conversation messages, preserve them
@@ -3801,14 +3812,48 @@ async function askAI(question, options = {}) {
       - To run a terminal command: {{agent:exec:ls -la}}
       ` : '';
     
-    // Determine if we should use lightweight model based on agent mode
+    // Build special mode instructions
+    let specialModeInstructions = '';
+    
+    if (config.fastAnswersMode.enabled) {
+      specialModeInstructions = `FAST ANSWERS MODE: Provide concise, direct answers. No explanations, no reasoning steps, no verbose responses. Answer in 1-2 sentences maximum. Focus on the specific question asked.`;
+    } else if (config.nvimHelpMode.enabled) {
+      // Load nvim keybindings and packages if available
+      let nvimContext = '';
+      try {
+        const keybindings = JSON.parse(fs.readFileSync(path.join(installDir, config.nvimHelpMode.keybindingsFile), 'utf8'));
+        const packages = JSON.parse(fs.readFileSync(path.join(installDir, config.nvimHelpMode.packagesFile), 'utf8'));
+        nvimContext = `NVIM KEYBINDINGS:\n${JSON.stringify(keybindings, null, 2)}\n\nNVIM PACKAGES:\n${JSON.stringify(packages, null, 2)}`;
+      } catch (e) {
+        nvimContext = 'Nvim configuration files not found. Using default vim/neovim knowledge.';
+      }
+      specialModeInstructions = `NVIM HELP MODE: You are a lightning-fast vim/neovim assistant. Provide exact keybindings and commands. Be concise and specific.\n\n${nvimContext}`;
+    } else if (config.vocabMode.enabled) {
+      specialModeInstructions = `VOCABULARY MODE: You are a writing assistant focused on ${config.vocabMode.focusAreas.join(', ')}. Help fix spelling, improve vocabulary, enhance grammar, make writing more professional, and convert bullet points to polished content. Be concise and direct.`;
+    }
+    
+    // Determine if we should use lightweight model based on special modes and agent mode
     let useMainModel = true;
     let modelDecision = "Using main model";
     let isDirectCmd = false;
     let skipReasoning = false;
     
+    // Handle special modes first
+    if (config.fastAnswersMode.enabled) {
+      useMainModel = !config.fastAnswersMode.useLightModel;
+      skipReasoning = config.fastAnswersMode.disableReasoning;
+      modelDecision = useMainModel ? "Using main model (fast answers)" : "Using lightweight model (fast answers)";
+    } else if (config.nvimHelpMode.enabled) {
+      useMainModel = false; // Always use light model for quick nvim help
+      skipReasoning = true;
+      modelDecision = "Using lightweight model (nvim help)";
+    } else if (config.vocabMode.enabled) {
+      useMainModel = false; // Use light model for vocab corrections
+      skipReasoning = true;
+      modelDecision = "Using lightweight model (vocabulary mode)";
+    }
     // Check if direct mode is enabled
-    if (config.directMode && config.directMode.enabled) {
+    else if (config.directMode && config.directMode.enabled) {
       useMainModel = true;
       modelDecision = "Using main model (direct mode enabled)";
       skipReasoning = config.directMode.skipReasoning;
@@ -3850,7 +3895,7 @@ async function askAI(question, options = {}) {
         const openaiMessages = [
           {
             role: 'system',
-            content: `You are a helpful AI assistant in a terminal environment. ${isDirectCmd ? 
+            content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${isDirectCmd ? 
               `For file and terminal operations, ALWAYS use the most direct approach. When asked to list files or show directory contents, use the {{agent:exec:ls -la /path}} or {{agent:fs:list:/path}} syntax immediately without unnecessary explanation. Be concise and action-oriented.` : 
               ''} ${agentInstructions}`
           },
@@ -3876,7 +3921,7 @@ async function askAI(question, options = {}) {
           throw new Error('Anthropic API key not set or invalid. Please check your ANTHROPIC_API_KEY environment variable.');
         }
         // Format messages for Anthropic
-        const anthropicSystemContent = `You are a helpful AI assistant in a terminal environment. ${isDirectCmd ? 
+        const anthropicSystemContent = `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${isDirectCmd ? 
           `For file and terminal operations, ALWAYS use the most direct approach. When asked to list files or show directory contents, use the {{agent:exec:ls -la /path}} or {{agent:fs:list:/path}} syntax immediately without unnecessary explanation. Be concise and action-oriented.` : 
           ''} ${agentInstructions}`;
         
@@ -3905,7 +3950,7 @@ async function askAI(question, options = {}) {
           throw new Error('Google API key not set or invalid. Please check your GOOGLE_API_KEY environment variable.');
         }
         // Format messages for Google
-        const systemPrompt = `You are a helpful AI assistant in a terminal environment. ${isDirectCmd ? 
+        const systemPrompt = `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${isDirectCmd ? 
           `For file and terminal operations, ALWAYS use the most direct approach. When asked to list files or show directory contents, use the {{agent:exec:ls -la /path}} or {{agent:fs:list:/path}} syntax immediately without unnecessary explanation. Be concise and action-oriented.` : 
           ''} ${agentInstructions}\n\n`;
         
@@ -3932,7 +3977,7 @@ async function askAI(question, options = {}) {
         const openRouterMessages = [
           {
             role: 'system',
-            content: `You are a helpful AI assistant in a terminal environment. ${isDirectCmd ? 
+            content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${isDirectCmd ? 
               `For file and terminal operations, ALWAYS use the most direct approach. When asked to list files or show directory contents, use the {{agent:exec:ls -la /path}} or {{agent:fs:list:/path}} syntax immediately without unnecessary explanation. Be concise and action-oriented.` : 
               ''} ${agentInstructions}`
           },
@@ -3974,7 +4019,7 @@ async function askAI(question, options = {}) {
           modelMessages = [
             {
               role: 'system',
-              content: `You are a helpful AI assistant in a terminal environment. ${agentInstructions}`
+              content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${agentInstructions}`
             },
             ...messageHistory.map(msg => ({
               role: msg.role === 'user' ? 'user' : 'assistant',
@@ -3987,7 +4032,7 @@ async function askAI(question, options = {}) {
           modelMessages = [
             {
               role: 'system',
-              content: `You are a helpful AI assistant in a terminal environment. ${agentInstructions}`
+              content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${agentInstructions}`
             },
             ...messageHistory.map(msg => ({
               role: msg.role === 'user' ? 'user' : 'assistant',
@@ -4001,7 +4046,7 @@ async function askAI(question, options = {}) {
           modelMessages = [
             {
               role: 'system',
-              content: `You are a helpful AI assistant in a terminal environment. ${agentInstructions}`
+              content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${agentInstructions}`
             },
             ...messageHistory.map(msg => ({
               role: msg.role === 'user' ? 'user' : 'assistant',
@@ -4014,7 +4059,7 @@ async function askAI(question, options = {}) {
           modelMessages = [
             {
               role: 'system',
-              content: `You are a helpful AI assistant in a terminal environment. ${agentInstructions}`
+              content: `You are a helpful AI assistant in a terminal environment. ${specialModeInstructions ? specialModeInstructions + ' ' : ''}${agentInstructions}`
             },
             ...messageHistory.map(msg => ({
               role: msg.role === 'user' ? 'user' : 'assistant',
@@ -4670,6 +4715,17 @@ async function startChatMode() {
     }
   }
   
+  // Show special mode status
+  if (!quietStart) {
+    if (config.fastAnswersMode.enabled) {
+      console.log(chalk.cyan('🚀 Fast Answers Mode: Lightning-fast responses for quick questions'));
+    } else if (config.nvimHelpMode.enabled) {
+      console.log(chalk.cyan('⚡ Nvim Help Mode: Instant vim/neovim keybinding assistance'));
+    } else if (config.vocabMode.enabled) {
+      console.log(chalk.cyan('📝 Vocabulary Mode: Writing, spelling, and grammar assistance'));
+    }
+  }
+  
   if (!quietStart) {
     console.log(chalk.yellow('Type "/help" for available commands, "/exit", "/quit", or "/end" to quit'));
   }
@@ -5163,6 +5219,54 @@ async function startChatMode() {
         console.log(chalk.yellow('Agentic mode disabled.'));
       }
       continue;
+    } else if (question.toLowerCase() === '\\fast-answers' || question.toLowerCase() === '\\fa') {
+      // Toggle fast answers mode
+      config.fastAnswersMode.enabled = !config.fastAnswersMode.enabled;
+      if (config.fastAnswersMode.enabled) {
+        // Disable other modes when enabling fast answers
+        config.reasoningMode.enabled = false;
+        config.agentMode.enabled = false;
+        config.agentic.enabled = false;
+        config.codingMode.enabled = false;
+        config.nvimHelpMode.enabled = false;
+        config.vocabMode.enabled = false;
+        console.log(chalk.green('🚀 Fast Answers Mode enabled - Lightning-fast responses for quick questions'));
+      } else {
+        console.log(chalk.yellow('Fast Answers Mode disabled.'));
+      }
+      continue;
+    } else if (question.toLowerCase() === '\\nvim-help' || question.toLowerCase() === '\\nvim') {
+      // Toggle nvim help mode
+      config.nvimHelpMode.enabled = !config.nvimHelpMode.enabled;
+      if (config.nvimHelpMode.enabled) {
+        // Disable other modes when enabling nvim help
+        config.reasoningMode.enabled = false;
+        config.agentMode.enabled = false;
+        config.agentic.enabled = false;
+        config.codingMode.enabled = false;
+        config.fastAnswersMode.enabled = false;
+        config.vocabMode.enabled = false;
+        console.log(chalk.green('⚡ Nvim Help Mode enabled - Instant vim/neovim keybinding assistance'));
+      } else {
+        console.log(chalk.yellow('Nvim Help Mode disabled.'));
+      }
+      continue;
+    } else if (question.toLowerCase() === '\\vocabulary' || question.toLowerCase() === '\\vocab') {
+      // Toggle vocabulary mode
+      config.vocabMode.enabled = !config.vocabMode.enabled;
+      if (config.vocabMode.enabled) {
+        // Disable other modes when enabling vocabulary mode
+        config.reasoningMode.enabled = false;
+        config.agentMode.enabled = false;
+        config.agentic.enabled = false;
+        config.codingMode.enabled = false;
+        config.fastAnswersMode.enabled = false;
+        config.nvimHelpMode.enabled = false;
+        console.log(chalk.green('📝 Vocabulary Mode enabled - Writing, spelling, and grammar assistance'));
+      } else {
+        console.log(chalk.yellow('Vocabulary Mode disabled.'));
+      }
+      continue;
     } else if (question.toLowerCase().startsWith('\\task ')) {
       // Create a new task
       if (!config.agentic.enabled) {
@@ -5440,6 +5544,11 @@ async function startChatMode() {
       console.log(chalk.yellow('- Automatic local scan: Ask “what can you tell me about X in this app?” to run a non-destructive repo scan (toggle in Settings)'));
       console.log(chalk.yellow('- \\auto-scan [on|off] (alias: \\autoscan) - Toggle automatic local scan'));
       console.log(chalk.yellow('- \\visual, \\v - Open visual tri-pane (files | chat | preview). Inside: [V] toggle panes, [C] ask AI'));
+      
+      console.log(chalk.cyan('\nSpecial Mode Commands:'));
+      console.log(chalk.yellow('- \\fast-answers, \\fa - Toggle fast answers mode (quick responses, no reasoning)'));
+      console.log(chalk.yellow('- \\nvim-help, \\nvim - Toggle nvim help mode (vim/neovim keybinding assistance)'));
+      console.log(chalk.yellow('- \\vocabulary, \\vocab - Toggle vocabulary mode (spelling, grammar, writing help)'));
       
       if (config.codingMode.enabled) {
         console.log(chalk.cyan('\nCoding Mode Commands:'));
@@ -6283,16 +6392,45 @@ program
   .name('qa')
   .description('QA - Terminal AI Assistant with multi-provider support, coding assistance, and agentic parallel execution')
   .version('1.0.0')
-  .option('--qs, --quiet-start', 'Quiet start (suppress banner and startup messages)');
+  .option('--qs, --quiet-start', 'Quiet start (suppress banner and startup messages)')
+  .option('--fa, --fast-answers', 'Fast answers mode (quick responses, no reasoning)')
+  .option('--nvim, --nvim-help', 'Neovim help mode (vim/nvim keybinding assistance)')
+  .option('--vocab, --vocabulary', 'Vocabulary mode (spelling, grammar, and writing assistance)');
 
 // Enrich CLI help output with examples and notes
-program.addHelpText('after', `\nExamples:\n  $ qa --qs\n  $ qa --quiet-start\n  $ qa settings\n\nNotes:\n  - Inside chat, commands start with \\ (backslash). Forward-slash / is supported but deprecated.\n  - Paste mode: type \\p, finish with \\end (Windows: Ctrl+Z then Enter).\n  - Agentic: prefix a single query with \\a (or \\agent, \\agentic).\n  - Exec: use \\e or \\exec to run commands; common natural-language ops are translated (e.g.,\n    "make a new directory ~/Documents/testabc", "open terminal here",\n    "zip each of src docs", "replace 'old' with 'new' in files matching *.js under ./src").\n`);
+program.addHelpText('after', `\nExamples:\n  $ qa --qs\n  $ qa --fast-answers\n  $ qa --nvim\n  $ qa --vocab\n  $ qa settings\n\nSpecial Modes:\n  - Fast Answers: Quick responses without reasoning for simple questions\n  - Nvim Help: Lightning-fast vim/neovim keybinding assistance\n  - Vocabulary: Spelling, grammar, and professional writing assistance\n\nNotes:\n  - Inside chat, commands start with \\ (backslash). Forward-slash / is supported but deprecated.\n  - Paste mode: type \\p, finish with \\end (Windows: Ctrl+Z then Enter).\n  - Agentic: prefix a single query with \\a (or \\agent, \\agentic).\n  - Exec: use \\e or \\exec to run commands; common natural-language ops are translated (e.g.,\n    "make a new directory ~/Documents/testabc", "open terminal here",\n    "zip each of src docs", "replace 'old' with 'new' in files matching *.js under ./src").\n`);
 
 // Default command starts chat mode
 program
   .action(async () => {
     // Load configuration
     loadConfig();
+    
+    // Configure special modes based on startup flags
+    if (fastAnswersMode) {
+      config.fastAnswersMode.enabled = true;
+      config.reasoningMode.enabled = false;
+      config.agentMode.enabled = false;
+      config.agentic.enabled = false;
+      config.codingMode.enabled = false;
+    }
+    
+    if (nvimHelpMode) {
+      config.nvimHelpMode.enabled = true;
+      config.reasoningMode.enabled = false;
+      config.agentMode.enabled = false;
+      config.agentic.enabled = false;
+      config.codingMode.enabled = false;
+    }
+    
+    if (vocabMode) {
+      config.vocabMode.enabled = true;
+      config.reasoningMode.enabled = false;
+      config.agentMode.enabled = false;
+      config.agentic.enabled = false;
+      config.codingMode.enabled = false;
+    }
+    
     await startChatMode();
   });
 

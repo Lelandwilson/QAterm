@@ -61,6 +61,32 @@ qa
   qa settings
   ```
 
+### Special Modes
+
+QAterm supports specialized modes for different use cases:
+
+- **Fast Answers Mode:** Quick responses for simple questions
+  ```bash
+  qa --fa  # or --fast-answers
+  ```
+
+- **Nvim Help Mode:** Lightning-fast vim/neovim keybinding assistance  
+  ```bash
+  qa --nvim  # or --nvim-help
+  ```
+
+- **Vocabulary Mode:** Writing, spelling, and grammar assistance
+  ```bash
+  qa --vocab  # or --vocabulary  
+  ```
+
+All special modes can be combined with `--qs` for quiet startup:
+```bash
+qa --fast-answers --qs
+qa --nvim --qs
+qa --vocab --qs
+```
+
 ### In Chat Mode
 
 - Type your questions and get AI responses
@@ -79,6 +105,11 @@ qa
   - `\exec command`: Execute terminal commands (when agent is enabled)
   - `\copy` or `\copy-last`: Copy last AI response to clipboard
   - `\copy-all` or `\copy-session`: Copy entire session transcript to clipboard
+
+#### Special Mode Toggle Commands
+  - `\fast-answers` or `\fa`: Toggle fast answers mode (quick responses, no reasoning)
+  - `\nvim-help` or `\nvim`: Toggle nvim help mode (vim/neovim keybinding assistance)
+  - `\vocabulary` or `\vocab`: Toggle vocabulary mode (spelling, grammar, writing help)
 
 Supported models include latest OpenAI options (e.g., `gpt-5`). Use `\menu` to select provider and model interactively.
   

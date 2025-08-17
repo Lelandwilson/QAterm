@@ -6,6 +6,10 @@ This guide covers day-to-day usage of QAterm: chat, paste, agentic tasks, natura
 
 - Normal: `qa` (or `node index.js`)
 - Quiet start: `qa --qs` (or `--quiet-start`) prints only `<Connected>` and suppresses banners.
+- Special modes:
+  - Fast answers: `qa --fa` (or `--fast-answers`) - Lightning-fast responses for quick questions
+  - Nvim help: `qa --nvim` (or `--nvim-help`) - Instant vim/neovim keybinding assistance
+  - Vocabulary: `qa --vocab` (or `--vocabulary`) - Writing, spelling, and grammar assistance
 
 ## Prompt Basics
 
@@ -27,6 +31,11 @@ This guide covers day-to-day usage of QAterm: chat, paste, agentic tasks, natura
 - `\d <question>`: Send directly to powerful model
 - `\a <question>`: Run this single query with agentic multi-agent mode
 - `\tui`: Launch the interactive TUI (file browser + search)
+
+### Special Mode Toggle Commands
+- `\fast-answers`, `\fa`: Toggle fast answers mode (quick responses, no reasoning)
+- `\nvim-help`, `\nvim`: Toggle nvim help mode (vim/neovim keybinding assistance)  
+- `\vocabulary`, `\vocab`: Toggle vocabulary mode (spelling, grammar, writing help)
 
 ## Agentic and Exec
 

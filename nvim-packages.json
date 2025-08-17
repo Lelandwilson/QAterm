@@ -1,0 +1,39 @@
+{
+  "essential": [
+    "nvim-tree/nvim-tree.lua",
+    "nvim-telescope/telescope.nvim",
+    "neovim/nvim-lspconfig",
+    "hrsh7th/nvim-cmp",
+    "L3MON4D3/LuaSnip",
+    "nvim-treesitter/nvim-treesitter",
+    "lewis6991/gitsigns.nvim",
+    "folke/which-key.nvim"
+  ],
+  "themes": [
+    "folke/tokyonight.nvim",
+    "catppuccin/nvim",
+    "EdenEast/nightfox.nvim",
+    "rebelot/kanagawa.nvim"
+  ],
+  "productivity": [
+    "akinsho/bufferline.nvim",
+    "nvim-lualine/lualine.nvim",
+    "lukas-reineke/indent-blankline.nvim",
+    "windwp/nvim-autopairs",
+    "numToStr/Comment.nvim",
+    "kylechui/nvim-surround"
+  ],
+  "git": [
+    "tpope/vim-fugitive",
+    "sindrets/diffview.nvim",
+    "NeogitOrg/neogit"
+  ],
+  "coding": [
+    "jose-elias-alvarez/null-ls.nvim",
+    "williamboman/mason.nvim",
+    "williamboman/mason-lspconfig.nvim",
+    "folke/trouble.nvim",
+    "simrat39/symbols-outline.nvim"
+  ],
+  "note": "This is a starter set. Add your specific packages here for personalized nvim help."
+}
