@@ -7,7 +7,9 @@
     "L3MON4D3/LuaSnip",
     "nvim-treesitter/nvim-treesitter",
     "lewis6991/gitsigns.nvim",
-    "folke/which-key.nvim"
+    "folke/which-key.nvim",
+    "echasnovski/mini.nvim",
+    "nvim-neo-tree/neo-tree.nvim"
   ],
   "themes": [
     "folke/tokyonight.nvim",
@@ -21,7 +23,10 @@
     "lukas-reineke/indent-blankline.nvim",
     "windwp/nvim-autopairs",
     "numToStr/Comment.nvim",
-    "kylechui/nvim-surround"
+    "kylechui/nvim-surround",
+    "goolord/alpha-nvim",
+    "alexghergh/nvim-tmux-navigation",
+    "stevearc/oil.nvim"
   ],
   "git": [
     "tpope/vim-fugitive",
@@ -34,6 +39,15 @@
     "williamboman/mason-lspconfig.nvim",
     "folke/trouble.nvim",
     "simrat39/symbols-outline.nvim"
+  ],
+  "ai": [
+    "jackMort/ChatGPT.nvim"
+  ],
+  "tools": [
+    "iamcco/swagger-preview.nvim"
+  ],
+  "testing": [
+    "vim-test/vim-test"
   ],
   "note": "This is a starter set. Add your specific packages here for personalized nvim help."
 }

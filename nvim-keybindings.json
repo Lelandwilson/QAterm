@@ -45,7 +45,8 @@
     "n": "Go to next search result",
     "N": "Go to previous search result",
     "*": "Search for word under cursor (forward)",
-    "#": "Search for word under cursor (backward)"
+    "#": "Search for word under cursor (backward)",
+    "<leader>h": "Clear search highlight"
   },
   "visual": {
     "v": "Enter visual mode",
@@ -62,5 +63,20 @@
     ":q": "Quit",
     ":wq": "Save and quit",
     ":q!": "Quit without saving"
+  },
+  "chatgpt": {
+    "<leader>c": "Open ChatGPT",
+    "<leader>cf": "Fix Bugs",
+    "<leader>cx": "Explain Code",
+    "<leader>cs": "Summarize",
+    "<leader>ct": "Translate",
+    "<leader>cd": "Docstring",
+    "<leader>co": "Optimize Code"
+  },
+  "window": {
+    "<c-k>": "Move to the window above",
+    "<c-j>": "Move to the window below",
+    "<c-h>": "Move to the window to the left",
+    "<c-l>": "Move to the window to the right"
   }
 }
