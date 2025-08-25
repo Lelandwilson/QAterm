@@ -3,35 +3,37 @@
   "models": {
     "openai": "gpt-5",
     "anthropic": "claude-3-7-sonnet-20250219",
-    "google": "gemini-2.0-flash",
+    "google": "gemini-2.5-flash",
     "openrouter": "deepseek/deepseek-chat"
   },
   "lightModels": {
     "openai": "gpt-3.5-turbo",
     "anthropic": "claude-3-haiku-20240307",
-    "google": "gemini-2.0-flash-lite",
+    "google": "gemini-2.5-flash-lite",
     "openrouter": "deepseek/deepseek-r1:free"
   },
   "maxContextMessages": 100,
   "agentMode": {
-    "enabled": true,
+    "enabled": false,
     "routingThreshold": 0.7
   },
   "reasoningMode": {
-    "enabled": true,
+    "enabled": false,
     "iterations": 2,
     "showIntermediate": false
   },
   "agent": {
     "enabled": true,
-    "useVirtualEnvironment": false,
+    "useVirtualEnvironment": true,
     "autoApproveExec": true,
     "autoApproveFsSafe": true,
     "allowedDirectories": [
-      "/Users/leland/"
+      "/Users/leland/Dropbox/My Mac (MacBook Pro)/Documents/02_projects"
     ],
     "disallowedCommands": [
       "rm -rf",
+      "rm -r",
+      "rmdir",
       "sudo",
       "chmod",
       "chown",
@@ -40,18 +42,55 @@
       "find /",
       "> /dev",
       "curl | bash",
-      "wget | bash"
+      "wget | bash",
+      "mkfs",
+      "dd",
+      "format",
+      "fdisk",
+      "parted",
+      "mount",
+      "umount",
+      "shutdown",
+      "reboot",
+      "halt",
+      "poweroff",
+      "killall",
+      "pkill",
+      "kill -9",
+      "nohup",
+      "screen",
+      "tmux",
+      "ssh",
+      "scp",
+      "rsync",
+      "tar -czf",
+      "tar -xzf",
+      "zip",
+      "unzip",
+      "git push",
+      "git pull",
+      "git clone",
+      "npm install",
+      "npm uninstall",
+      "pip install",
+      "pip uninstall",
+      "brew install",
+      "brew uninstall",
+      "apt-get",
+      "yum",
+      "dnf",
+      "pacman"
     ]
   },
   "codingMode": {
-    "enabled": true,
+    "enabled": false,
     "maxContextMessages": 500,
     "projectContextFile": "ai.md",
     "currentContextFile": "current.md",
     "lastCompacted": null
   },
   "agentic": {
-    "enabled": true,
+    "enabled": false,
     "usePowerfulConductor": true,
     "maxConcurrentAgents": 5,
     "maxActionsPerAgent": 100,
@@ -77,26 +116,19 @@
     "maxSnippetsPerFile": 2,
     "snippetContext": 2
   },
-  "availableGeminiModels": {
-    "complex": [
-      "gemini-2.5-pro-exp-03-25",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro"
-    ],
-    "light": [
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-flash-8b"
-    ],
-    "embedding": [
-      "gemini-embedding-exp"
-    ]
-  },
   "directMode": {
     "enabled": true,
     "skipReasoning": true
   },
   "smartMode": {
     "enabled": false
+  },
+  "keybindings": {
+    "enabled": true,
+    "keybindingsFile": "keybindings.json"
+  },
+  "fileOperations": {
+    "lastUsedDirectory": "/Users/leland/Dropbox/My Mac (MacBook Pro)/Downloads",
+    "rememberLastDirectory": true
   }
 }

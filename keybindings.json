@@ -1,0 +1,36 @@
+{
+  "prefixKey": "ctrl-/",
+  "keybindings": {
+    "f": { "action": "file_explorer", "description": "Open file explorer/selector for any file type", "command": "\\file", "mode": "execute" },
+    "n": { "action": "navigate", "description": "Navigate to a new directory", "command": "\\cd", "mode": "execute" },
+    ":": { "action": "execute", "description": "Execute terminal command", "command": "\\exec", "mode": "execute" },
+    "h": { "action": "help", "description": "Show help information", "command": "\\help", "mode": "execute" },
+    "m": { "action": "menu", "description": "Open settings menu", "command": "\\menu", "mode": "execute" },
+    "c": { "action": "clear", "description": "Clear conversation history", "command": "\\clear", "mode": "execute" },
+    "v": { "action": "visual", "description": "Toggle visual tri-pane mode", "command": "\\visual", "mode": "toggle" },
+    "t": { "action": "tui", "description": "Open TUI file browser", "command": "\\tui", "mode": "execute" },
+    "p": { "action": "paste", "description": "Toggle paste mode", "command": "\\paste", "mode": "toggle" },
+    "a": { "action": "agentic", "description": "Toggle agentic mode", "command": "\\a", "mode": "toggle" },
+    "d": { "action": "direct", "description": "Send to powerful model directly", "command": "\\d", "mode": "execute" },
+    "r": { "action": "review", "description": "Review current project", "command": "\\review", "mode": "execute" },
+    "s": { "action": "status", "description": "Show system status", "command": "\\status", "mode": "execute" },
+    "w": { "action": "write", "description": "Write file operation", "command": "\\fs write", "mode": "execute" },
+    "l": { "action": "list", "description": "List directory contents", "command": "\\ls", "mode": "execute" },
+    "g": { "action": "grep", "description": "Search files with grep", "command": "\\grep", "mode": "execute" },
+    "i": { "action": "image", "description": "Image-specific operations (legacy)", "command": "\\image", "mode": "execute" },
+    "b": { "action": "browse", "description": "Browse files interactively", "command": "\\browse", "mode": "execute" },
+    "u": { "action": "upload", "description": "Upload files (legacy)", "command": "\\upload", "mode": "execute" }
+  },
+  "fileTypes": {
+    "images": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"],
+    "documents": [".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt"],
+    "spreadsheets": [".csv", ".xls", ".xlsx", ".ods"],
+    "code": [".js", ".ts", ".py", ".java", ".cpp", ".c", ".h", ".php", ".rb", ".go", ".rs", ".swift", ".kt", ".scala", ".clj", ".hs", ".ml", ".fs", ".vb", ".cs", ".sql", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd"],
+    "data": [".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf"],
+    "archives": [".zip", ".tar", ".gz", ".bz2", ".7z", ".rar"],
+    "web": [".html", ".htm", ".css", ".scss", ".sass", ".less", ".jsx", ".tsx", ".vue", ".svelte"],
+    "config": [".env", ".gitignore", ".dockerfile", ".dockerignore", ".gitattributes", ".editorconfig"],
+    "logs": [".log", ".out", ".err"],
+    "all": ["*"]
+  }
+}

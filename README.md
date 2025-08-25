@@ -79,6 +79,13 @@ qa
   - `\exec command`: Execute terminal commands (when agent is enabled)
   - `\copy` or `\copy-last`: Copy last AI response to clipboard
   - `\copy-all` or `\copy-session`: Copy entire session transcript to clipboard
+  - `\image <filepath>` or `\image`: Upload and analyze images (supports JPG, PNG, GIF, WebP, BMP, TIFF)
+- `\upload <filepath>` or `\upload`: Upload and analyze images (alias for \image)
+- `\img <filepath>` or `\img`: Upload and analyze images (alias for \image)
+- `\images <filepath>` or `\images`: Upload and analyze multiple images
+- `\uploads <filepath>` or `\uploads`: Upload and analyze multiple images (alias for \images)
+- `\file <filepath>` or `\file`: Upload and analyze any supported file type
+- `\files <filepath>` or `\files`: Upload and analyze multiple files
 
 Supported models include latest OpenAI options (e.g., `gpt-5`). Use `\menu` to select provider and model interactively.
   
@@ -123,6 +130,96 @@ When enabled, the AI can interact with your file system and terminal:
   - Virtual environment option for sandboxed execution
   - Uses current working directory by default
   - Auto‑approval (safe): When enabled, non‑destructive FS ops (`read`, `list`, `exists`) can be auto‑approved. In Visual mode, safe ops suggested by the AI are executed silently and results are rendered in the Chat pane.
+
+### Keybindings (Vim-like)
+QAterm features a Vim-like keybinding system with a prefix key (`Ctrl+S`) for quick access to common commands. The system uses a **hybrid approach** with both toggle modes and execute commands.
+
+#### Hybrid Mode System
+**Toggle Modes (Persistent):**
+- `Ctrl+S` + `a`: Toggle agentic mode ON/OFF
+- `Ctrl+S` + `v`: Toggle visual tri-pane mode ON/OFF  
+- `Ctrl+S` + `p`: Toggle paste mode ON/OFF
+
+**Execute Commands (One-time):**
+- `Ctrl+S` + `f`: Execute file explorer/selector for any file type
+- `Ctrl+S` + `n`: Execute directory navigation
+- `Ctrl+S` + `:`: Execute terminal command
+- `Ctrl+S` + `h`: Execute help information
+- `Ctrl+S` + `m`: Execute settings menu
+- `Ctrl+S` + `c`: Execute clear conversation history
+- `Ctrl+S` + `t`: Execute TUI file browser
+- `Ctrl+S` + `d`: Execute direct model query
+- `Ctrl+S` + `r`: Execute project review
+- `Ctrl+S` + `s`: Execute system status
+- `Ctrl+S` + `w`: Execute file write operation
+- `Ctrl+S` + `l`: Execute directory listing
+- `Ctrl+S` + `g`: Execute grep search
+
+#### Mode Behaviour
+- **Toggle modes** persist until toggled off again
+- **Execute commands** run once and return to normal mode
+- Current mode is displayed in the interface
+- Mode states are tracked independently
+
+#### Configuration
+Keybindings can be customized in `keybindings.json`. The system supports:
+- Custom prefix key
+- Remappable key combinations
+- Command aliases
+- Mode settings (toggle vs execute)
+- Timeout settings
+
+### File Upload and Analysis
+QAterm supports uploading and analyzing various file types with AI providers that have vision capabilities.
+
+#### Supported File Types
+- **Images**: JPG, PNG, GIF, WebP, BMP, TIFF, SVG
+- **Documents**: PDF, DOC, DOCX, TXT, MD, RTF, ODT
+- **Spreadsheets**: CSV, XLS, XLSX, ODS
+- **Code**: JS, TS, PY, Java, C++, C, PHP, Ruby, Go, Rust, Swift, Kotlin, Scala, Clojure, Haskell, ML, F#, VB, C#, SQL, Shell scripts
+- **Data**: JSON, XML, YAML, TOML, INI, CFG, CONF
+- **Archives**: ZIP, TAR, GZ, BZ2, 7Z, RAR
+- **Web**: HTML, CSS, SCSS, SASS, LESS, JSX, TSX, Vue, Svelte
+- **Config**: ENV, GitIgnore, Dockerfile, EditorConfig
+- **Logs**: LOG, OUT, ERR
+
+#### Usage Methods
+- Direct file path: `\file ./document.pdf "What do you see in this document?"`
+- Interactive browser: `\file` (then browse and select)
+- Multiple file selection: `\files` (then browse and select multiple)
+- Clipboard paste: `\upload` (then paste file path)
+
+#### AI Provider Support
+- OpenAI GPT-4o (vision)
+- Anthropic Claude 3.5 Sonnet (vision)
+- Google Gemini 2.0 Flash (vision)
+- OpenRouter DeepSeek Vision
+
+#### Features
+- Telescope-like file browser with file type icons
+- Multiple file selection with visual indicators
+- Base64 encoding for all providers
+- File size and format validation
+- Multiple command aliases (`\file`, `\files`, `\upload`, `\uploads`)
+
+### Image Upload and Analysis
+- **Supported Formats**: JPG, PNG, GIF, WebP, BMP, TIFF
+- **Usage Methods**:
+  - Direct file path: `\image ./screenshot.png "What do you see in this image?"`
+  - Interactive browser: `\image` (then browse and select)
+  - Multiple image selection: `\images` (then browse and select multiple)
+  - Clipboard paste: `\upload` (then paste file path)
+- **AI Provider Support**:
+  - OpenAI GPT-4o (vision)
+  - Anthropic Claude 3.5 Sonnet (vision)
+  - Google Gemini 2.0 Flash (vision)
+  - OpenRouter DeepSeek Vision
+- **Features**:
+  - Telescope-like file browser for image selection
+  - Multiple image selection with visual indicators
+  - Base64 encoding for all providers
+  - File size and format validation
+  - Multiple command aliases (`\image`, `\upload`, `\img`, `\images`, `\uploads`)
 
 ### Automatic Local Scan (Non-destructive)
 - What it does: When you ask about a feature in “this app/project” (e.g., “what can you tell me about the fzf feature in this app?”), QAterm will:
@@ -230,8 +327,8 @@ When enabled, this powerful mode provides true multi-agent orchestration:
 - claude-3-haiku-20240307 (default for simple queries in agent mode)
 
 ### Google
-- gemini-2.0-flash (default for complex queries)
-- gemini-2.0-flash-lite (default for simple queries in agent mode)
+- gemini-2.5-pro (default for complex queries)
+- gemini-2.5-flash-lite (default for simple queries in agent mode)
 
 ### OpenRouter
 - deepseek/deepseek-v2 (default for complex queries)

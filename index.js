@@ -29,6 +29,33 @@ import { promisify } from 'util';
 import readline from 'readline';
 import { startNewCodingProject } from './projectStarter.js';
 import { startTui, startEditor } from './tui.js';
+// Document parsing libraries (loaded when needed)
+let mammoth, XLSX, pdf;
+
+// Function to load document parsing libraries
+async function loadDocumentParsers() {
+  if (!mammoth) {
+    try {
+      mammoth = (await import('mammoth')).default;
+    } catch (error) {
+      console.log(chalk.yellow('Warning: mammoth library not available for .docx files'));
+    }
+  }
+  if (!XLSX) {
+    try {
+      XLSX = (await import('xlsx')).default;
+    } catch (error) {
+      console.log(chalk.yellow('Warning: xlsx library not available for Excel files'));
+    }
+  }
+  if (!pdf) {
+    try {
+      pdf = (await import('pdf-parse')).default;
+    } catch (error) {
+      console.log(chalk.yellow('Warning: pdf-parse library not available for PDF files'));
+    }
+  }
+}
 
 // Setup __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -68,6 +95,52 @@ if (process.env.OPENROUTER_API_KEY) {
 // Track last outputs for copy actions
 let lastAIResponse = '';
 let sessionTranscript = [];
+
+// Keybinding system variables
+let keybindings = {};
+let keybindingTimeout = null;
+let waitingForKeybinding = false;
+let prefixKeyPressed = false;
+let currentMode = 'normal'; // 'normal', 'agentic', 'visual', 'paste'
+let modeStates = {
+  agentic: false,
+  visual: false,
+  paste: false
+};
+
+// AI request cancellation system
+let currentAIRequest = null;
+let isAICancelled = false;
+
+// Signal handling for canceling AI requests
+process.on('SIGINT', () => {
+  if (currentAIRequest) {
+    console.log(chalk.yellow('\n🛑 Cancelling AI request...'));
+    isAICancelled = true;
+    currentAIRequest.abort();
+    currentAIRequest = null;
+  } else {
+    console.log(chalk.yellow('\n👋 Goodbye!'));
+    process.exit(0);
+  }
+});
+
+// Handle Ctrl+C and Escape key for canceling AI requests
+process.stdin.setRawMode(true);
+process.stdin.resume();
+process.stdin.setEncoding('utf8');
+
+process.stdin.on('data', (key) => {
+  // Ctrl+C (ASCII 3) or Escape (ASCII 27)
+  if (key === '\u0003' || key === '\u001b') {
+    if (currentAIRequest) {
+      console.log(chalk.yellow('\n🛑 Cancelling AI request...'));
+      isAICancelled = true;
+      currentAIRequest.abort();
+      currentAIRequest = null;
+    }
+  }
+});
 
 // Utility: strip ANSI sequences for clean copying
 function stripAnsi(input) {
@@ -298,6 +371,475 @@ function changeWorkingDirectory(targetPath, createIfMissing = false) {
         throw new Error(`Directory does not exist: ${p}`);
       }
     }
+
+// Image handling utilities
+const SUPPORTED_IMAGE_FORMATS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'];
+
+// File handling utilities - expanded for all file types
+const SUPPORTED_FILE_FORMATS = {
+  images: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.svg'],
+  documents: ['.pdf', '.doc', '.docx', '.txt', '.md', '.rtf', '.odt'],
+  spreadsheets: ['.csv', '.xls', '.xlsx', '.ods'],
+  code: ['.js', '.ts', '.py', '.java', '.cpp', '.c', '.h', '.php', '.rb', '.go', '.rs', '.swift', '.kt', '.scala', '.clj', '.hs', '.ml', '.fs', '.vb', '.cs', '.sql', '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd'],
+  data: ['.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf'],
+  archives: ['.zip', '.tar', '.gz', '.bz2', '.7z', '.rar'],
+  web: ['.html', '.htm', '.css', '.scss', '.sass', '.less', '.jsx', '.tsx', '.vue', '.svelte'],
+  config: ['.env', '.gitignore', '.dockerfile', '.dockerignore', '.gitattributes', '.editorconfig'],
+  logs: ['.log', '.out', '.err']
+};
+
+// Check if a file is a supported image format
+function isImageFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return SUPPORTED_IMAGE_FORMATS.includes(ext);
+}
+
+// Check if a file is supported (any type)
+function isSupportedFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return getAllSupportedExtensions().includes(ext);
+}
+
+// Get all supported file extensions
+function getAllSupportedExtensions() {
+  return Object.values(SUPPORTED_FILE_FORMATS).flat();
+}
+
+// Get the category of a file based on its extension
+function getFileCategory(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  for (const [category, extensions] of Object.entries(SUPPORTED_FILE_FORMATS)) {
+    if (extensions.includes(ext)) {
+      return category;
+    }
+  }
+  return 'unknown';
+}
+
+// Get file icon based on category
+function getFileIcon(fileName) {
+  const ext = path.extname(fileName).toLowerCase();
+  if (SUPPORTED_FILE_FORMATS.images.includes(ext)) return '🖼️';
+  if (SUPPORTED_FILE_FORMATS.documents.includes(ext)) return '📄';
+  if (SUPPORTED_FILE_FORMATS.spreadsheets.includes(ext)) return '📊';
+  if (SUPPORTED_FILE_FORMATS.code.includes(ext)) return '💻';
+  if (SUPPORTED_FILE_FORMATS.data.includes(ext)) return '📋';
+  if (SUPPORTED_FILE_FORMATS.web.includes(ext)) return '🌐';
+  if (SUPPORTED_FILE_FORMATS.config.includes(ext)) return '⚙️';
+  if (SUPPORTED_FILE_FORMATS.logs.includes(ext)) return '📝';
+  return '📄';
+}
+
+// Convert image to base64 for AI providers
+async function imageToBase64(imagePath) {
+  try {
+    const imageBuffer = fs.readFileSync(imagePath);
+    const ext = path.extname(imagePath).toLowerCase();
+    let mimeType;
+    
+    switch (ext) {
+      case '.jpg':
+      case '.jpeg':
+        mimeType = 'image/jpeg';
+        break;
+      case '.png':
+        mimeType = 'image/png';
+        break;
+      case '.gif':
+        mimeType = 'image/gif';
+        break;
+      case '.webp':
+        mimeType = 'image/webp';
+        break;
+      case '.bmp':
+        mimeType = 'image/bmp';
+        break;
+      case '.tiff':
+      case '.tif':
+        mimeType = 'image/tiff';
+        break;
+      default:
+        mimeType = 'image/jpeg';
+    }
+    
+    const base64 = imageBuffer.toString('base64');
+    return {
+      data: base64,
+      mimeType: mimeType,
+      size: imageBuffer.length
+    };
+  } catch (error) {
+    throw new Error(`Failed to read image file: ${error.message}`);
+  }
+}
+
+// Generate images using AI providers
+async function generateImage(prompt, options = {}) {
+  const {
+    size = '1024x1024',
+    quality = 'standard',
+    style = 'natural',
+    outputPath = null
+  } = options;
+  
+  try {
+    let imageData = null;
+    
+    switch (config.currentProvider) {
+      case 'openai':
+        if (!openai) {
+          throw new Error('OpenAI API key not set or invalid.');
+        }
+        
+        const openaiImageResponse = await openai.images.generate({
+          model: 'dall-e-3',
+          prompt: prompt,
+          size: size,
+          quality: quality,
+          style: style,
+          response_format: 'b64_json'
+        });
+        
+        imageData = {
+          data: openaiImageResponse.data[0].b64_json,
+          mimeType: 'image/png',
+          size: openaiImageResponse.data[0].b64_json.length
+        };
+        break;
+        
+      case 'anthropic':
+        // Anthropic doesn't have image generation yet, fall back to OpenAI if available
+        if (openai) {
+          console.log(chalk.yellow('Anthropic doesn\'t support image generation, using OpenAI DALL-E instead...'));
+          const openaiImageResponse = await openai.images.generate({
+            model: 'dall-e-3',
+            prompt: prompt,
+            size: size,
+            quality: quality,
+            style: style,
+            response_format: 'b64_json'
+          });
+          
+          imageData = {
+            data: openaiImageResponse.data[0].b64_json,
+            mimeType: 'image/png',
+            size: openaiImageResponse.data[0].b64_json.length
+          };
+        } else {
+          throw new Error('Image generation not available with current provider. Use OpenAI for DALL-E support.');
+        }
+        break;
+        
+      case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid.');
+        }
+        
+        // Google Gemini can generate images
+        const googleModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+        const googleImageResponse = await googleModel.generateContent([
+          prompt,
+          { inlineData: { data: '', mimeType: 'image/png' } }
+        ]);
+        
+        // Note: Google's image generation is more limited than DALL-E
+        console.log(chalk.yellow('Google Gemini image generation is experimental. Consider using OpenAI for better results.'));
+        throw new Error('Google Gemini image generation not fully implemented yet. Use OpenAI for DALL-E support.');
+        
+      case 'openrouter':
+        // OpenRouter can route to DALL-E models
+        if (!openRouter) {
+          throw new Error('OpenRouter API key not set or invalid.');
+        }
+        
+        const openRouterImageResponse = await openRouter.images.generate({
+          model: 'dall-e-3',
+          prompt: prompt,
+          size: size,
+          quality: quality,
+          style: style,
+          response_format: 'b64_json'
+        });
+        
+        imageData = {
+          data: openRouterImageResponse.data[0].b64_json,
+          mimeType: 'image/png',
+          size: openRouterImageResponse.data[0].b64_json.length
+        };
+        break;
+        
+      default:
+        throw new Error(`Image generation not supported by provider: ${config.currentProvider}`);
+    }
+    
+    // Save the image if output path is specified
+    if (outputPath && imageData) {
+      const resolvedPath = path.isAbsolute(outputPath) 
+        ? outputPath 
+        : path.join(currentWorkingDirectory, outputPath);
+      
+      // Ensure directory exists
+      const dir = path.dirname(resolvedPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
+      // Convert base64 to buffer and save
+      const imageBuffer = Buffer.from(imageData.data, 'base64');
+      fs.writeFileSync(resolvedPath, imageBuffer);
+      
+      console.log(chalk.green(`✓ Image saved to: ${resolvedPath}`));
+    }
+    
+    return imageData;
+    
+  } catch (error) {
+    throw new Error(`Failed to generate image: ${error.message}`);
+  }
+}
+
+// Convert any file to base64 for AI providers (expanded from imageToBase64)
+async function fileToBase64(filePath) {
+  try {
+    // Check if file is private/restricted before reading
+    if (isPathIgnored(filePath, aiIgnorePatterns)) {
+      throw new Error(`Access to ${filePath} is blocked by .aiignore rules. This file is restricted for privacy and security.`);
+    }
+    
+    const fileBuffer = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    let mimeType;
+    
+    // Determine MIME type based on file extension
+    switch (ext) {
+      // Images
+      case '.jpg':
+      case '.jpeg':
+        mimeType = 'image/jpeg';
+        break;
+      case '.png':
+        mimeType = 'image/png';
+        break;
+      case '.gif':
+        mimeType = 'image/gif';
+        break;
+      case '.webp':
+        mimeType = 'image/webp';
+        break;
+      case '.bmp':
+        mimeType = 'image/bmp';
+        break;
+      case '.tiff':
+      case '.tif':
+        mimeType = 'image/tiff';
+        break;
+      case '.svg':
+        mimeType = 'image/svg+xml';
+        break;
+      // Documents
+      case '.pdf':
+        mimeType = 'application/pdf';
+        break;
+      case '.doc':
+        mimeType = 'application/msword';
+        break;
+      case '.docx':
+        mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        break;
+      case '.txt':
+        mimeType = 'text/plain';
+        break;
+      case '.md':
+        mimeType = 'text/markdown';
+        break;
+      case '.rtf':
+        mimeType = 'application/rtf';
+        break;
+      case '.odt':
+        mimeType = 'application/vnd.oasis.opendocument.text';
+        break;
+      // Spreadsheets
+      case '.csv':
+        mimeType = 'text/csv';
+        break;
+      case '.xls':
+        mimeType = 'application/vnd.ms-excel';
+        break;
+      case '.xlsx':
+        mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        break;
+      case '.ods':
+        mimeType = 'application/vnd.oasis.opendocument.spreadsheet';
+        break;
+      // Code files
+      case '.js':
+        mimeType = 'application/javascript';
+        break;
+      case '.ts':
+        mimeType = 'application/typescript';
+        break;
+      case '.py':
+        mimeType = 'text/x-python';
+        break;
+      case '.java':
+        mimeType = 'text/x-java-source';
+        break;
+      case '.cpp':
+      case '.c':
+      case '.h':
+        mimeType = 'text/x-c++src';
+        break;
+      case '.php':
+        mimeType = 'application/x-httpd-php';
+        break;
+      case '.rb':
+        mimeType = 'text/x-ruby';
+        break;
+      case '.go':
+        mimeType = 'text/x-go';
+        break;
+      case '.rs':
+        mimeType = 'text/x-rust';
+        break;
+      case '.swift':
+        mimeType = 'text/x-swift';
+        break;
+      case '.kt':
+        mimeType = 'text/x-kotlin';
+        break;
+      case '.scala':
+        mimeType = 'text/x-scala';
+        break;
+      case '.clj':
+        mimeType = 'text/x-clojure';
+        break;
+      case '.hs':
+        mimeType = 'text/x-haskell';
+        break;
+      case '.ml':
+        mimeType = 'text/x-ocaml';
+        break;
+      case '.fs':
+        mimeType = 'text/x-fsharp';
+        break;
+      case '.vb':
+        mimeType = 'text/x-vb';
+        break;
+      case '.cs':
+        mimeType = 'text/x-csharp';
+        break;
+      case '.sql':
+        mimeType = 'text/x-sql';
+        break;
+      case '.sh':
+      case '.bash':
+      case '.zsh':
+      case '.fish':
+      case '.ps1':
+      case '.bat':
+      case '.cmd':
+        mimeType = 'text/x-shellscript';
+        break;
+      // Data files
+      case '.json':
+        mimeType = 'application/json';
+        break;
+      case '.xml':
+        mimeType = 'application/xml';
+        break;
+      case '.yaml':
+      case '.yml':
+        mimeType = 'text/yaml';
+        break;
+      case '.toml':
+        mimeType = 'text/x-toml';
+        break;
+      case '.ini':
+      case '.cfg':
+      case '.conf':
+        mimeType = 'text/plain';
+        break;
+      // Web files
+      case '.html':
+      case '.htm':
+        mimeType = 'text/html';
+        break;
+      case '.css':
+        mimeType = 'text/css';
+        break;
+      case '.scss':
+        mimeType = 'text/x-scss';
+        break;
+      case '.sass':
+        mimeType = 'text/x-sass';
+        break;
+      case '.less':
+        mimeType = 'text/x-less';
+        break;
+      case '.jsx':
+        mimeType = 'text/jsx';
+        break;
+      case '.tsx':
+        mimeType = 'text/tsx';
+        break;
+      case '.vue':
+        mimeType = 'text/x-vue';
+        break;
+      case '.svelte':
+        mimeType = 'text/x-svelte';
+        break;
+      // Config files
+      case '.env':
+        mimeType = 'text/plain';
+        break;
+      case '.gitignore':
+      case '.dockerfile':
+      case '.dockerignore':
+      case '.gitattributes':
+      case '.editorconfig':
+        mimeType = 'text/plain';
+        break;
+      // Log files
+      case '.log':
+      case '.out':
+      case '.err':
+        mimeType = 'text/plain';
+        break;
+      // Archives
+      case '.zip':
+        mimeType = 'application/zip';
+        break;
+      case '.tar':
+        mimeType = 'application/x-tar';
+        break;
+      case '.gz':
+        mimeType = 'application/gzip';
+        break;
+      case '.bz2':
+        mimeType = 'application/x-bzip2';
+        break;
+      case '.7z':
+        mimeType = 'application/x-7z-compressed';
+        break;
+      case '.rar':
+        mimeType = 'application/x-rar-compressed';
+        break;
+      default:
+        mimeType = 'application/octet-stream';
+    }
+    
+    const base64 = fileBuffer.toString('base64');
+    return {
+      data: base64,
+      mimeType: mimeType,
+      size: fileBuffer.length,
+      category: getFileCategory(filePath)
+    };
+  } catch (error) {
+    throw new Error(`Failed to read file: ${error.message}`);
+  }
+}
     if (!fs.statSync(p).isDirectory()) throw new Error(`Not a directory: ${p}`);
     currentWorkingDirectory = p;
     console.log(chalk.green(`Changed directory to: ${formatCwdForPrompt()}`));
@@ -643,13 +1185,13 @@ config = {
   models: {
     openai: 'gpt-4o',
     anthropic: 'claude-3-7-sonnet-20250219',
-    google: 'gemini-2.0-flash',
+    google: 'gemini-2.5-pro',
     openrouter: 'openrouter/deepseek/deepseek-r1:free'
   },
   lightModels: {
     openai: 'gpt-3.5-turbo',
     anthropic: 'claude-3-haiku-20240307',
-    google: 'gemini-2.0-flash-lite',
+    google: 'gemini-2.5-flash-lite',
     openrouter: 'openrouter/deepseek/deepseek-chat:free'
   },
   maxContextMessages: 100, // Default context window size
@@ -2532,11 +3074,40 @@ function saveConfig() {
   }
 }
 
+// Save the last used directory for file operations
+function saveLastUsedDirectory(directoryPath) {
+  try {
+    if (!config.fileOperations) {
+      config.fileOperations = {};
+    }
+    config.fileOperations.lastUsedDirectory = path.resolve(directoryPath);
+    config.fileOperations.rememberLastDirectory = true;
+    saveConfig();
+  } catch (error) {
+    console.error('Error saving last used directory:', error.message);
+  }
+}
+
+// Get the last used directory for file operations
+function getLastUsedDirectory() {
+  try {
+    if (config.fileOperations && 
+        config.fileOperations.rememberLastDirectory && 
+        config.fileOperations.lastUsedDirectory &&
+        fs.existsSync(config.fileOperations.lastUsedDirectory)) {
+      return config.fileOperations.lastUsedDirectory;
+    }
+  } catch (error) {
+    console.error('Error getting last used directory:', error.message);
+  }
+  return currentWorkingDirectory;
+}
+
 // Format AI responses for better terminal display
-function formatAIResponse(text) {
+async function formatAIResponse(text) {
   // Process tool_code blocks in AI responses
   if (text.includes('```tool_code') && text.includes('{{agent:fs:write:')) {
-    processToolCodeBlocks(text);
+    await processToolCodeBlocks(text);
   }
 
   // Return text directly without boxen borders for easier copy/paste
@@ -2690,7 +3261,7 @@ async function executeAgentCommandsFromText(text, options = {}) {
 }
 
 // Process tool_code blocks in AI responses
-function processToolCodeBlocks(text) {
+async function processToolCodeBlocks(text) {
   // Match tool_code blocks with agent file write commands
   const toolCodeRegex = /```tool_code\s*\n\s*\{\{agent:fs:write:(.*?):([\s\S]*?)\}\}\s*\n\s*```/g;
   let match;
@@ -2720,6 +3291,34 @@ function processToolCodeBlocks(text) {
       }
     } catch (error) {
       console.error(chalk.red(`Error processing file write command: ${error.message}`));
+    }
+  }
+  
+  // Process image generation commands
+  const imageGenRegex = /\{\{agent:image:generate:(.*?):(.*?)\}\}/g;
+  let imageMatch;
+  
+  while ((imageMatch = imageGenRegex.exec(text)) !== null) {
+    try {
+      const prompt = imageMatch[1].trim();
+      const outputPath = imageMatch[2].trim();
+      
+      console.log(chalk.cyan(`Generating image: ${prompt}`));
+      console.log(chalk.cyan(`Output path: ${outputPath}`));
+      
+      // Generate the image
+      const imageData = await generateImage(prompt, {
+        outputPath: outputPath,
+        size: '1024x1024',
+        quality: 'standard',
+        style: 'natural'
+      });
+      
+      if (imageData) {
+        console.log(chalk.green(`✓ Successfully generated image: ${outputPath}`));
+      }
+    } catch (error) {
+      console.error(chalk.red(`Error generating image: ${error.message}`));
     }
   }
 }
@@ -2808,6 +3407,31 @@ function isDangerousExec(command) {
   return /(\brm\b|\brmdir\b|\brd\b|\bdel\b|remove-item|\bmkfs\b|\bdd\s+if=|format\s)/.test(c);
 }
 
+function isSafeLookupCommand(command) {
+  const c = (command || '').toLowerCase().trim();
+  
+  // Define safe lookup commands that can be executed automatically
+  const safeCommands = [
+    'ls', 'ls -la', 'ls -l', 'ls -a', 'ls -la', 'ls -lah',
+    'grep', 'grep -r', 'grep -i', 'grep -n', 'grep -l', 'grep -v',
+    'rg', 'rg -i', 'rg -n', 'rg -l', 'rg -v', 'rg -r',
+    'find', 'find .', 'find . -name', 'find . -type',
+    'cat', 'head', 'tail', 'wc', 'wc -l', 'wc -w', 'wc -c',
+    'pwd', 'whoami', 'date', 'uptime', 'ps', 'ps aux',
+    'df', 'df -h', 'du', 'du -h', 'du -sh',
+    'file', 'stat', 'which', 'whereis', 'type',
+    'echo', 'echo $PATH', 'echo $HOME',
+    'env', 'printenv', 'set'
+  ];
+  
+  // Check if the command starts with any safe command
+  return safeCommands.some(safeCmd => {
+    const safeCmdLower = safeCmd.toLowerCase();
+    return c.startsWith(safeCmdLower) && 
+           (c.length === safeCmdLower.length || c[safeCmdLower.length] === ' ');
+  });
+}
+
 function executeCommand(command, useTerminalMode = false) {
   return new Promise((resolve, reject) => {
     if (!isCommandAllowed(command)) {
@@ -2887,7 +3511,8 @@ function translateNaturalCommand(input) {
   const text = input.trim();
   const home = os.homedir();
   const expandTilde = (p) => p.replace(/^~(\b|\/)/, home + (p.startsWith('~/') ? '/' : ''));
-  const quote = (p) => '"' + p.replace(/"/g, '\\"') + '"';
+  const toPosix = (p) => (typeof p === 'string' ? p.replace(/\\/g, '/') : p);
+  const quote = (p) => '"' + toPosix(p).replace(/"/g, '\\"') + '"';
   const isWin = process.platform === 'win32';
 
   const openCmd = (p) => {
@@ -3028,13 +3653,15 @@ function translateNaturalCommand(input) {
     const p = expandTilde((m[1] || currentWorkingDirectory).trim());
     let cmd;
     if (process.platform === 'darwin') {
-      const esc = p.replace(/"/g, '\\"');
+      const esc = toPosix(p).replace(/"/g, '\\"');
       cmd = `osascript -e "tell application \"Terminal\" to do script \"cd \"\"${esc}\"\"\""`;
     } else if (isWin) {
-      cmd = `powershell -NoProfile -Command Start-Process wt -ArgumentList \"-d ${p}\"`;
+      const pfx = toPosix(p).replace(/"/g, '\\"');
+      cmd = `powershell -NoProfile -Command Start-Process wt -ArgumentList \"-d ${pfx}\"`;
     } else {
       // Try common terminals; fallback to xdg-open as best-effort
-      cmd = `bash -lc 'if command -v gnome-terminal >/dev/null 2>&1; then gnome-terminal --working-directory=${quote(p)}; elif command -v konsole >/dev/null 2>&1; then konsole --workdir ${quote(p)}; elif command -v xterm >/dev/null 2>&1; then xterm -e bash -lc "cd ${p.replace(/"/g, '\\"')}; exec bash"; else xdg-open ${quote(p)}; fi'`;
+      const pEsc = toPosix(p).replace(/"/g, '\\"');
+      cmd = `bash -lc 'if command -v gnome-terminal >/dev/null 2>&1; then gnome-terminal --working-directory=${quote(p)}; elif command -v konsole >/dev/null 2>&1; then konsole --workdir ${quote(p)}; elif command -v xterm >/dev/null 2>&1; then xterm -e bash -lc "cd ${pEsc}; exec bash"; else xdg-open ${quote(p)}; fi'`;
     }
     return { cmd, explanation: 'Open terminal at path' };
   }
@@ -3102,12 +3729,12 @@ function translateNaturalCommand(input) {
     const parts = splitArgs(m[1].trim()).map(s => expandTilde(s));
     if (parts.length > 1) {
       if (isWin) {
-        const arr = parts.map(p => '"' + p.replace(/"/g, '\\"') + '"').join(',');
+        const arr = parts.map(p => '"' + toPosix(p).replace(/"/g, '\\"') + '"').join(',');
         const script = `powershell -NoProfile -Command $items=@(${arr}); foreach($p in $items){ $bn=Split-Path -Leaf $p; $zip=($bn -like '*.zip') ? $bn : ($bn + '.zip'); Compress-Archive -Path $p -DestinationPath $zip }`;
         return { cmd: script, explanation: 'Batch zip items' };
       } else {
         const cmds = parts.map(p => {
-          const bn = path.basename(p).replace(/"/g, '\\"');
+          const bn = path.basename(toPosix(p)).replace(/"/g, '\\"');
           const zipf = bn.endsWith('.zip') ? bn : `${bn}.zip`;
           return `zip -r "${zipf}" ${quote(p)}`;
         }).join(' && ');
@@ -3724,7 +4351,7 @@ async function askAI(question, options = {}) {
         if (!silent) console.log(chalk.blue(`Agent ${data.agent.role}: Completed action "${data.action}"`));
       });
       
-      taskManager.on('task-completed', (result) => {
+      taskManager.on('task-completed', async (result) => {
         if (!silent) console.log(chalk.green('Task completed!'));
         
         // If there's a summary, add it to message history
@@ -3734,7 +4361,7 @@ async function askAI(question, options = {}) {
             content: result.summary 
           });
           
-          if (!silent) console.log(formatAIResponse(result.summary));
+          if (!silent) console.log(await formatAIResponse(result.summary));
         }
         
         // Reset active task ID
@@ -3793,12 +4420,37 @@ async function askAI(question, options = {}) {
     // Build system instructions including agent capabilities if enabled
     const agentInstructions = config.agent.enabled ? 
       `You can suggest file system or terminal operations by using {{agent:fs:operation:path[:content]}} or {{agent:exec:command}} syntax. The user will be asked for permission before executing any command. File operations include: read, write, list, exists.
+      
+      FILE CREATION CAPABILITIES:
+      - You can create any type of file when requested by the user
+      - For code files: Create complete, working scripts with proper syntax and structure
+      - For text files: Create well-formatted documents, README files, configuration files, etc.
+      - For data files: Create JSON, CSV, YAML, or other structured data files
+      - For configuration files: Create .env, .gitignore, package.json, requirements.txt, etc.
+      - Always include proper file extensions and use appropriate syntax highlighting
+      - Create directories if needed using {{agent:exec:mkdir -p /path/to/directory}}
+      
+      IMAGE GENERATION CAPABILITIES:
+      - You can generate images when requested by the user
+      - Use {{agent:image:generate:prompt:output_path.png}} syntax for image generation
+      - Supported formats: PNG, JPG, WebP
+      - Available sizes: 1024x1024, 1792x1024, 1024x1792
+      - Available qualities: standard, hd
+      - Available styles: natural, vivid
+      - Images will be automatically saved to the specified path
+      - Example: {{agent:image:generate:A beautiful sunset over mountains:./images/sunset.png}}
+      
       Examples:
       - To read a file: {{agent:fs:read:/path/to/file.txt}}
       - To list directory contents: {{agent:fs:list:/path/to/directory}}
       - To check if file exists: {{agent:fs:exists:/path/to/file.txt}}
       - To write to a file: {{agent:fs:write:/path/to/file.txt:Content to write}}
+      - To create a Python script: {{agent:fs:write:script.py:#!/usr/bin/env python3\n\n# Your Python code here}}
+      - To create a JSON config: {{agent:fs:write:config.json:{"key": "value"}}
+      - To create a README: {{agent:fs:write:README.md:# Project Title\n\nDescription here}}
+      - To generate an image: {{agent:image:generate:A futuristic robot:./robot.png}}
       - To run a terminal command: {{agent:exec:ls -la}}
+      - To create a directory: {{agent:exec:mkdir -p /path/to/directory}}
       ` : '';
     
     // Determine if we should use lightweight model based on agent mode
@@ -3862,13 +4514,27 @@ async function askAI(question, options = {}) {
         
         const model = useMainModel ? config.models.openai : config.lightModels.openai;
         
-        const openaiResponse = await openai.chat.completions.create({
-          model: model,
-          messages: openaiMessages,
-          ...(!(model && typeof model === 'string' && model.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
-        });
+        // Set up cancellation for this request
+        isAICancelled = false;
+        const controller = new AbortController();
+        currentAIRequest = controller;
         
-        response = openaiResponse.choices[0].message.content;
+        try {
+          const openaiResponse = await openai.chat.completions.create({
+            model: model,
+            messages: openaiMessages,
+            ...(!(model && typeof model === 'string' && model.startsWith('gpt-5')) ? { temperature: 0.7 } : {})
+          });
+          
+          // Check if request was cancelled
+          if (isAICancelled) {
+            throw new Error('Request cancelled by user');
+          }
+          
+          response = openaiResponse.choices[0].message.content;
+        } finally {
+          currentAIRequest = null;
+        }
         break;
         
       case 'anthropic':
@@ -3918,9 +4584,24 @@ async function askAI(question, options = {}) {
         
         const googleModelName = useMainModel ? config.models.google : config.lightModels.google;
         const googleModel = genAI.getGenerativeModel({ model: googleModelName });
-        const googleResponse = await googleModel.generateContent(googleMessages);
         
-        response = googleResponse.response.text();
+        // Set up cancellation for this request (Google Gemini doesn't support signal parameter)
+        isAICancelled = false;
+        const googleController = new AbortController();
+        currentAIRequest = googleController;
+        
+        try {
+          const googleResponse = await googleModel.generateContent(googleMessages);
+          
+          // Check if request was cancelled
+          if (isAICancelled) {
+            throw new Error('Request cancelled by user');
+          }
+          
+          response = googleResponse.response.text();
+        } finally {
+          currentAIRequest = null;
+        }
         break;
         
       case 'openrouter':
@@ -4074,7 +4755,7 @@ async function askAI(question, options = {}) {
       if (spinner) spinner.succeed(chalk.blue('Response received!'));
       
       // Display the response with the command suggestion
-      if (!silent) console.log(formatAIResponse(response));
+              if (!silent) console.log(await formatAIResponse(response));
       
       // In silent mode (e.g., visual), do not prompt or execute; let caller handle safe ops
       if (silent) {
@@ -4133,7 +4814,7 @@ async function askAI(question, options = {}) {
             }]);
             confirmed = ans.confirmed;
           }
-        } else if (!(cmd.commandType === 'exec' && config.agent.autoApproveExec && !isDangerousExec(cmd.command))) {
+        } else if (!(cmd.commandType === 'exec' && config.agent.autoApproveExec && isSafeLookupCommand(cmd.command) && !isDangerousExec(cmd.command))) {
           const ans = await inquirer.prompt([{
             type: 'confirm',
             name: 'confirmed',
@@ -4615,6 +5296,1516 @@ function updateProjectContext(newFeature) {
   }
 }
 
+// Interactive file browser with fuzzy search for current directory contents
+async function selectFile(startPath = '.', fileType = 'all', allowMultiple = false) {
+  // Use remembered directory if available and no specific startPath provided
+  if (startPath === '.' && config.fileOperations?.rememberLastDirectory) {
+    startPath = getLastUsedDirectory();
+  }
+  
+  const files = [];
+  const directories = [];
+  const selectedFiles = [];
+  
+  try {
+    const items = fs.readdirSync(startPath);
+    
+    for (const item of items) {
+      const fullPath = path.join(startPath, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        directories.push(item);
+      } else if (fileType === 'all' || isSupportedFile(fullPath)) {
+        files.push(item);
+      }
+    }
+    
+    // Sort alphabetically
+    directories.sort();
+    files.sort();
+    
+    let allChoices = [
+      ...directories.map(dir => ({ name: `📁 ${dir}/`, value: `dir:${dir}` })),
+      ...files.map(file => ({ 
+        name: `${allowMultiple && selectedFiles.includes(file) ? '✅' : '📄'} ${file}`, 
+        value: `file:${file}` 
+      })),
+      { name: '⬆️  .. (parent directory)', value: '..' },
+      { name: '❌ Cancel', value: 'cancel' }
+    ];
+    
+    if (allowMultiple && selectedFiles.length > 0) {
+      allChoices.push({ name: `✅ Done (${selectedFiles.length} selected)`, value: 'done' });
+    }
+    
+    let searchQuery = '';
+    
+    while (true) {
+      // Show search prompt first
+      const searchAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'search',
+          message: `Search files in ${path.resolve(startPath)} (type to filter, press Enter to browse):`,
+          default: searchQuery
+        }
+      ]);
+      
+      searchQuery = searchAnswer.search;
+      
+      // Filter choices based on search query (only for current directory contents)
+      let displayChoices = allChoices;
+      let message = `Select file${allowMultiple ? 's' : ''} from ${path.resolve(startPath)}${allowMultiple && selectedFiles.length > 0 ? ` (${selectedFiles.length} selected)` : ''}:`;
+      
+      if (searchQuery.trim() !== '') {
+        // Only filter files and directories, keep navigation options
+        const fileAndDirChoices = allChoices.filter(choice => 
+          choice.value.startsWith('file:') || choice.value.startsWith('dir:')
+        );
+        const navigationChoices = allChoices.filter(choice => 
+          !choice.value.startsWith('file:') && !choice.value.startsWith('dir:')
+        );
+        
+        const filteredFileAndDir = fuzzySearch(searchQuery, fileAndDirChoices);
+        
+        if (filteredFileAndDir.length === 0) {
+          console.log(chalk.yellow('No files match your search. Try a different query.'));
+          continue;
+        }
+        
+        displayChoices = [...filteredFileAndDir, ...navigationChoices];
+        message = `Select file${allowMultiple ? 's' : ''} from ${path.resolve(startPath)} (filtered by "${searchQuery}")${allowMultiple && selectedFiles.length > 0 ? ` (${selectedFiles.length} selected)` : ''}:`;
+      }
+      
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selection',
+          message: message,
+          choices: displayChoices,
+          pageSize: 20
+        }
+      ]);
+      
+      if (answer.selection === 'cancel') {
+        return null;
+      } else if (answer.selection === 'done') {
+        // Save the directory for future use
+        saveLastUsedDirectory(startPath);
+        return selectedFiles.map(file => path.join(startPath, file));
+      } else if (answer.selection === '..') {
+        const parentPath = path.dirname(startPath);
+        if (parentPath === startPath) {
+          return null; // Already at root
+        }
+        return selectFile(parentPath, fileType, allowMultiple);
+      } else if (answer.selection.startsWith('dir:')) {
+        const dirName = answer.selection.substring(4);
+        const newPath = path.join(startPath, dirName);
+        return selectFile(newPath, fileType, allowMultiple);
+      } else if (answer.selection.startsWith('file:')) {
+        const fileName = answer.selection.substring(5);
+        
+        if (allowMultiple) {
+          // Toggle selection
+          if (selectedFiles.includes(fileName)) {
+            selectedFiles.splice(selectedFiles.indexOf(fileName), 1);
+          } else {
+            selectedFiles.push(fileName);
+          }
+          
+          // Update the choices to reflect selection state
+          allChoices = [
+            ...directories.map(dir => ({ name: `📁 ${dir}/`, value: `dir:${dir}` })),
+            ...files.map(file => ({ 
+              name: `${selectedFiles.includes(file) ? '✅' : '📄'} ${file}`, 
+              value: `file:${file}` 
+            })),
+            { name: '⬆️  .. (parent directory)', value: '..' },
+            { name: '❌ Cancel', value: 'cancel' }
+          ];
+          
+          if (selectedFiles.length > 0) {
+            allChoices.push({ name: `✅ Done (${selectedFiles.length} selected)`, value: 'done' });
+          }
+          
+          continue; // Continue the loop to show updated selection
+        } else {
+          // Single file selection
+          const selectedFilePath = path.join(startPath, fileName);
+          // Save the directory for future use
+          saveLastUsedDirectory(startPath);
+          return selectedFilePath;
+        }
+      }
+      
+      return null;
+    }
+  } catch (error) {
+    console.log(chalk.red(`Error reading directory: ${error.message}`));
+    return null;
+  }
+}
+
+// Interactive file browser for multiple file selection (all types)
+async function selectMultipleFiles(startPath = '.', fileType = 'all') {
+  // Use remembered directory if available and no specific startPath provided
+  if (startPath === '.' && config.fileOperations?.rememberLastDirectory) {
+    startPath = getLastUsedDirectory();
+  }
+  
+  const files = [];
+  const directories = [];
+  const selectedFiles = [];
+  
+  try {
+    const items = fs.readdirSync(startPath);
+    
+    for (const item of items) {
+      const fullPath = path.join(startPath, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        directories.push(item);
+      } else if (fileType === 'all' || isSupportedFile(fullPath)) {
+        files.push(item);
+      }
+    }
+    
+    // Sort alphabetically
+    directories.sort();
+    files.sort();
+    
+    let allChoices = [
+      ...directories.map(dir => ({ name: `📁 ${dir}/`, value: `dir:${dir}` })),
+      ...files.map(file => ({ 
+        name: `${selectedFiles.includes(file) ? '✅' : '📄'} ${file}`, 
+        value: `file:${file}` 
+      })),
+      { name: '⬆️  .. (parent directory)', value: '..' },
+      { name: '✅ Done selecting', value: 'done' },
+      { name: '❌ Cancel', value: 'cancel' }
+    ];
+    
+    let filteredChoices = allChoices;
+    let searchQuery = '';
+    
+    while (true) {
+      const searchAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'search',
+          message: `Search files in ${path.resolve(startPath)} (type to filter, press Enter to select):`,
+          default: searchQuery
+        }
+      ]);
+      
+      searchQuery = searchAnswer.search;
+      
+      let choices = filteredChoices;
+      let message = `Select files from ${path.resolve(startPath)} (${selectedFiles.length} selected):`;
+      
+      if (searchQuery.trim() !== '') {
+        // Filter choices based on search query
+        choices = fuzzySearch(searchQuery, allChoices);
+        
+        if (choices.length === 0) {
+          console.log(chalk.yellow('No files match your search. Try a different query.'));
+          continue;
+        }
+        
+        message = `Select files from ${path.resolve(startPath)} (filtered by "${searchQuery}", ${selectedFiles.length} selected):`;
+        choices = [
+          ...choices,
+          { name: '🔍 New search', value: 'new_search' },
+          { name: '❌ Cancel', value: 'cancel' }
+        ];
+      }
+      
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selection',
+          message: message,
+          choices: choices,
+          pageSize: 20
+        }
+      ]);
+      
+      if (answer.selection === 'new_search') {
+        continue; // Continue the search loop
+      }
+    
+    if (answer.selection === 'cancel') {
+      return null;
+    } else if (answer.selection === 'done') {
+      // Save the directory for future use
+      saveLastUsedDirectory(startPath);
+      return selectedFiles.map(file => path.join(startPath, file));
+    } else if (answer.selection === '..') {
+        const parentPath = path.dirname(startPath);
+        if (parentPath === startPath) {
+          return null; // Already at root
+        }
+        return selectMultipleFiles(parentPath, fileType);
+      } else if (answer.selection.startsWith('dir:')) {
+        const dirName = answer.selection.substring(4);
+        const newPath = path.join(startPath, dirName);
+        return selectMultipleFiles(newPath, fileType);
+      } else if (answer.selection.startsWith('file:')) {
+        const fileName = answer.selection.substring(5);
+        if (selectedFiles.includes(fileName)) {
+          // Remove from selection
+          selectedFiles.splice(selectedFiles.indexOf(fileName), 1);
+        } else {
+          // Add to selection
+          selectedFiles.push(fileName);
+        }
+        // Continue the loop to show updated selection
+      }
+    }
+  } catch (error) {
+    console.log(chalk.red(`Error reading directory: ${error.message}`));
+    return null;
+  }
+}
+
+// Interactive file browser for single image selection (legacy)
+async function selectImageFile(startPath = '.') {
+  // Use remembered directory if available and no specific startPath provided
+  if (startPath === '.' && config.fileOperations?.rememberLastDirectory) {
+    startPath = getLastUsedDirectory();
+  }
+  
+  const files = [];
+  const directories = [];
+  
+  try {
+    const items = fs.readdirSync(startPath);
+    
+    for (const item of items) {
+      const fullPath = path.join(startPath, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        directories.push(item);
+      } else if (isImageFile(fullPath)) {
+        files.push(item);
+      }
+    }
+    
+    // Sort alphabetically
+    directories.sort();
+    files.sort();
+    
+    let allChoices = [
+      ...directories.map(dir => ({ name: `📁 ${dir}/`, value: `dir:${dir}` })),
+      ...files.map(file => ({ name: `🖼️  ${file}`, value: `file:${file}` })),
+      { name: '⬆️  .. (parent directory)', value: '..' },
+      { name: '❌ Cancel', value: 'cancel' }
+    ];
+    
+    let filteredChoices = allChoices;
+    let searchQuery = '';
+    
+    while (true) {
+      const searchAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'search',
+          message: `Search images in ${path.resolve(startPath)} (type to filter, press Enter to select):`,
+          default: searchQuery
+        }
+      ]);
+      
+      searchQuery = searchAnswer.search;
+      
+      let choices = filteredChoices;
+      let message = `Select image from ${path.resolve(startPath)}:`;
+      
+      if (searchQuery.trim() !== '') {
+        // Filter choices based on search query
+        choices = fuzzySearch(searchQuery, allChoices);
+        
+        if (choices.length === 0) {
+          console.log(chalk.yellow('No images match your search. Try a different query.'));
+          continue;
+        }
+        
+        message = `Select image from ${path.resolve(startPath)} (filtered by "${searchQuery}"):`;
+        choices = [
+          ...choices,
+          { name: '🔍 New search', value: 'new_search' },
+          { name: '❌ Cancel', value: 'cancel' }
+        ];
+      }
+      
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selection',
+          message: message,
+          choices: choices,
+          pageSize: 20
+        }
+      ]);
+      
+      if (answer.selection === 'new_search') {
+        continue; // Continue the search loop
+      }
+    
+          if (answer.selection === 'cancel') {
+        return null;
+      } else if (answer.selection === '..') {
+        const parentPath = path.dirname(startPath);
+        if (parentPath === startPath) {
+          return null; // Already at root
+        }
+        return selectImageFile(parentPath);
+      } else if (answer.selection.startsWith('dir:')) {
+        const dirName = answer.selection.substring(4);
+        const newPath = path.join(startPath, dirName);
+        return selectImageFile(newPath);
+      } else if (answer.selection.startsWith('file:')) {
+        const fileName = answer.selection.substring(5);
+        const selectedFilePath = path.join(startPath, fileName);
+        // Save the directory for future use
+        saveLastUsedDirectory(startPath);
+        return selectedFilePath;
+      }
+      
+      return null;
+    }
+  } catch (error) {
+    console.log(chalk.red(`Error reading directory: ${error.message}`));
+    return null;
+  }
+}
+
+// Interactive file browser for multiple image selection
+async function selectMultipleImages(startPath = '.') {
+  // Use remembered directory if available and no specific startPath provided
+  if (startPath === '.' && config.fileOperations?.rememberLastDirectory) {
+    startPath = getLastUsedDirectory();
+  }
+  
+  const files = [];
+  const directories = [];
+  const selectedFiles = [];
+  
+  try {
+    const items = fs.readdirSync(startPath);
+    
+    for (const item of items) {
+      const fullPath = path.join(startPath, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        directories.push(item);
+      } else if (isImageFile(fullPath)) {
+        files.push(item);
+      }
+    }
+    
+    // Sort alphabetically
+    directories.sort();
+    files.sort();
+    
+    let allChoices = [
+      ...directories.map(dir => ({ name: `📁 ${dir}/`, value: `dir:${dir}` })),
+      ...files.map(file => ({ 
+        name: `${selectedFiles.includes(file) ? '✅' : '🖼️'} ${file}`, 
+        value: `file:${file}` 
+      })),
+      { name: '⬆️  .. (parent directory)', value: '..' },
+      { name: '✅ Done selecting', value: 'done' },
+      { name: '❌ Cancel', value: 'cancel' }
+    ];
+    
+    let filteredChoices = allChoices;
+    let searchQuery = '';
+    
+    while (true) {
+      const searchAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'search',
+          message: `Search images in ${path.resolve(startPath)} (type to filter, press Enter to select):`,
+          default: searchQuery
+        }
+      ]);
+      
+      searchQuery = searchAnswer.search;
+      
+      let choices = filteredChoices;
+      let message = `Select images from ${path.resolve(startPath)} (${selectedFiles.length} selected):`;
+      
+      if (searchQuery.trim() !== '') {
+        // Filter choices based on search query
+        choices = fuzzySearch(searchQuery, allChoices);
+        
+        if (choices.length === 0) {
+          console.log(chalk.yellow('No images match your search. Try a different query.'));
+          continue;
+        }
+        
+        message = `Select images from ${path.resolve(startPath)} (filtered by "${searchQuery}", ${selectedFiles.length} selected):`;
+        choices = [
+          ...choices,
+          { name: '🔍 New search', value: 'new_search' },
+          { name: '❌ Cancel', value: 'cancel' }
+        ];
+      }
+      
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selection',
+          message: message,
+          choices: choices,
+          pageSize: 20
+        }
+      ]);
+      
+      if (answer.selection === 'new_search') {
+        continue; // Continue the search loop
+      }
+      
+      if (answer.selection === 'cancel') {
+        return null;
+      } else if (answer.selection === 'done') {
+        // Save the directory for future use
+        saveLastUsedDirectory(startPath);
+        return selectedFiles.map(file => path.join(startPath, file));
+      } else if (answer.selection === '..') {
+        const parentPath = path.dirname(startPath);
+        if (parentPath === startPath) {
+          return null; // Already at root
+        }
+        return selectMultipleImages(parentPath);
+      } else if (answer.selection.startsWith('dir:')) {
+        const dirName = answer.selection.substring(4);
+        const newPath = path.join(startPath, dirName);
+        return selectMultipleImages(newPath);
+      } else if (answer.selection.startsWith('file:')) {
+        const fileName = answer.selection.substring(5);
+        if (selectedFiles.includes(fileName)) {
+          // Remove from selection
+          selectedFiles.splice(selectedFiles.indexOf(fileName), 1);
+        } else {
+          // Add to selection
+          selectedFiles.push(fileName);
+        }
+        // Continue the loop to show updated selection
+      }
+    }
+  } catch (error) {
+    console.log(chalk.red(`Error reading directory: ${error.message}`));
+    return null;
+  }
+}
+
+// Enhanced image upload with multiple input methods
+async function handleImageUpload(prompt = '', allowMultiple = false) {
+  console.log(chalk.blue('\n🖼️  Image Upload Options:'));
+  console.log(chalk.gray('1. Enter file path directly'));
+  console.log(chalk.gray('2. Browse files interactively'));
+  if (allowMultiple) {
+    console.log(chalk.gray('3. Browse and select multiple images'));
+  }
+  console.log(chalk.gray('4. Paste image path from clipboard'));
+  console.log(chalk.gray('5. Cancel'));
+  
+  const choices = [
+    { name: '📝 Enter file path', value: 'path' },
+    { name: '🔍 Browse files (single)', value: 'browse' }
+  ];
+  
+  if (allowMultiple) {
+    choices.push({ name: '🔍 Browse files (multiple)', value: 'browse-multiple' });
+  }
+  
+  choices.push(
+    { name: '📋 Paste from clipboard', value: 'paste' },
+    { name: '❌ Cancel', value: 'cancel' }
+  );
+  
+  const answer = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'method',
+      message: 'Choose image upload method:',
+      choices: choices
+    }
+  ]);
+  
+  if (answer.method === 'cancel') {
+    return null;
+  }
+  
+  let imagePaths = null;
+  
+  switch (answer.method) {
+    case 'path':
+      const pathAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'imagePath',
+          message: 'Enter image file path:',
+          default: prompt || '.',
+          validate: (input) => {
+            if (!input.trim()) return 'Path cannot be empty';
+            const resolvedPath = path.resolve(input.trim());
+            if (!fs.existsSync(resolvedPath)) return 'File does not exist';
+            if (!isImageFile(resolvedPath)) return 'File is not a supported image format';
+            return true;
+          }
+        }
+      ]);
+      imagePaths = [pathAnswer.imagePath.trim()];
+      break;
+      
+    case 'browse':
+      const singlePath = await selectImageFile('.');
+      imagePaths = singlePath ? [singlePath] : null;
+      break;
+      
+    case 'browse-multiple':
+      imagePaths = await selectMultipleImages('.');
+      break;
+      
+    case 'paste':
+      console.log(chalk.blue('Paste the image file path and press Enter:'));
+      const pastedPath = await new Promise((resolve) => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        
+        rl.question('', (answer) => {
+          rl.close();
+          resolve(answer.trim());
+        });
+      });
+      
+      if (pastedPath && fs.existsSync(pastedPath) && isImageFile(pastedPath)) {
+        imagePaths = [pastedPath];
+      } else {
+        console.log(chalk.red('Invalid image path pasted'));
+        return null;
+      }
+      break;
+  }
+  
+  if (!imagePaths || imagePaths.length === 0) {
+    return null;
+  }
+  
+  // Load all selected images
+  const imageDataArray = [];
+  let totalSize = 0;
+  
+  for (const imagePath of imagePaths) {
+    try {
+      const resolvedPath = path.resolve(imagePath);
+      const imageData = await imageToBase64(resolvedPath);
+      
+      imageDataArray.push({
+        path: resolvedPath,
+        base64: imageData.data,
+        mimeType: imageData.mimeType,
+        size: imageData.size
+      });
+      
+      totalSize += imageData.size;
+      console.log(chalk.green(`✓ Image loaded: ${path.basename(resolvedPath)} (${(imageData.size / 1024).toFixed(1)} KB)`));
+    } catch (error) {
+      console.log(chalk.red(`✗ Failed to load image ${path.basename(imagePath)}: ${error.message}`));
+    }
+  }
+  
+  if (imageDataArray.length === 0) {
+    console.log(chalk.red('No images were successfully loaded'));
+    return null;
+  }
+  
+  if (imageDataArray.length === 1) {
+    return imageDataArray[0];
+  } else {
+    console.log(chalk.blue(`✓ Loaded ${imageDataArray.length} images (total: ${(totalSize / 1024).toFixed(1)} KB)`));
+    return imageDataArray;
+  }
+}
+
+// Image upload utility functions
+// Check if a message contains image upload triggers
+function hasImageUploadTrigger(message) {
+  const triggers = [
+    /\\image\b/i,
+    /\\upload\b/i,
+    /\\img\b/i,
+    /\\images\b/i,
+    /\\uploads\b/i,
+    /image\s+upload/i,
+    /upload\s+image/i,
+    /attach\s+image/i,
+    /image\s+attach/i
+  ];
+  
+  return triggers.some(trigger => trigger.test(message));
+}
+
+// Check if a message requests multiple images
+function isMultipleImageRequest(message) {
+  const multipleTriggers = [
+    /\\images\b/i,
+    /\\uploads\b/i,
+    /multiple\s+images/i,
+    /several\s+images/i,
+    /many\s+images/i
+  ];
+  
+  return multipleTriggers.some(trigger => trigger.test(message));
+}
+
+// Extract image upload command from message
+function extractImageCommand(message) {
+  const imageMatch = message.match(/\\image\s+(.+)/i);
+  const uploadMatch = message.match(/\\upload\s+(.+)/i);
+  const imgMatch = message.match(/\\img\s+(.+)/i);
+  
+  return imageMatch?.[1] || uploadMatch?.[1] || imgMatch?.[1] || '';
+}
+
+
+
+// Check if a message contains file upload triggers
+function hasFileUploadTrigger(message) {
+  const triggers = [
+    /\\file\b/i,
+    /\\files\b/i,
+    /\\upload\b/i,
+    /\\uploads\b/i,
+    /file\s+upload/i,
+    /upload\s+file/i,
+    /attach\s+file/i,
+    /file\s+attach/i
+  ];
+  
+  return triggers.some(trigger => trigger.test(message));
+}
+
+// Check if a message requests multiple files
+function isMultipleFileRequest(message) {
+  const multipleTriggers = [
+    /\\files\b/i,
+    /\\uploads\b/i,
+    /multiple\s+files/i,
+    /several\s+files/i,
+    /many\s+files/i
+  ];
+  
+  return multipleTriggers.some(trigger => trigger.test(message));
+}
+
+// Extract file upload command from message
+function extractFileCommand(message) {
+  const fileMatch = message.match(/\\file\s+(.+)/i);
+  const filesMatch = message.match(/\\files\s+(.+)/i);
+  const uploadMatch = message.match(/\\upload\s+(.+)/i);
+  
+  return fileMatch?.[1] || filesMatch?.[1] || uploadMatch?.[1] || '';
+}
+
+// File upload handling for all file types
+async function handleFileUpload(prompt = '', allowMultiple = false) {
+  console.log(chalk.blue('\n📁 File Upload Options:'));
+  console.log(chalk.gray('1. Enter file path directly'));
+  console.log(chalk.gray('2. Browse files interactively'));
+  console.log(chalk.gray('3. Paste file path from clipboard'));
+  console.log(chalk.gray('4. Cancel'));
+  
+  const choices = [
+    { name: '📝 Enter file path', value: 'path' },
+    { name: '🔍 Browse files', value: 'browse' },
+    { name: '📋 Paste from clipboard', value: 'paste' },
+    { name: '❌ Cancel', value: 'cancel' }
+  ];
+  
+  const answer = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'method',
+      message: 'Choose file upload method:',
+      choices: choices
+    }
+  ]);
+  
+  if (answer.method === 'cancel') {
+    return null;
+  }
+  
+  let filePaths = null;
+  
+  switch (answer.method) {
+    case 'path':
+      const pathAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'filePath',
+          message: 'Enter file path:',
+          default: prompt || '.',
+          validate: (input) => {
+            if (!input.trim()) return 'Path cannot be empty';
+            const resolvedPath = path.resolve(input.trim());
+            if (!fs.existsSync(resolvedPath)) return 'File does not exist';
+            if (!isSupportedFile(resolvedPath)) return 'File is not a supported format';
+            
+            // Check if file is private/restricted
+            if (isPathIgnored(resolvedPath, aiIgnorePatterns)) {
+              return 'This file is restricted for privacy and security reasons';
+            }
+            
+            return true;
+          }
+        }
+      ]);
+      filePaths = [pathAnswer.filePath.trim()];
+      break;
+      
+    case 'browse':
+      const selectedPaths = await selectFile('.', 'all', allowMultiple);
+      filePaths = selectedPaths;
+      break;
+      
+
+      
+    case 'paste':
+      console.log(chalk.blue('Paste the file path and press Enter:'));
+      const pastedPath = await new Promise((resolve) => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        
+        rl.question('', (answer) => {
+          rl.close();
+          resolve(answer.trim());
+        });
+      });
+      
+      if (pastedPath && fs.existsSync(pastedPath) && isSupportedFile(pastedPath)) {
+        // Check if file is private/restricted
+        if (isPathIgnored(pastedPath, aiIgnorePatterns)) {
+          console.log(chalk.red('This file is restricted for privacy and security reasons'));
+          return null;
+        }
+        filePaths = [pastedPath];
+      } else {
+        console.log(chalk.red('Invalid file path pasted'));
+        return null;
+      }
+      break;
+  }
+  
+  if (!filePaths || filePaths.length === 0) {
+    console.log(chalk.yellow('No files selected'));
+    return null;
+  }
+  
+  // Load and convert files to base64
+  const fileDataArray = [];
+  let totalSize = 0;
+  
+  for (const filePath of filePaths) {
+    try {
+      // Check if file is private/restricted before reading
+      if (isPathIgnored(filePath, aiIgnorePatterns)) {
+        console.log(chalk.red(`Access to ${filePath} is blocked by .aiignore rules. This file is restricted for privacy and security.`));
+        continue;
+      }
+      
+      // Convert file to base64 inline
+      const fileBuffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      let mimeType = 'application/octet-stream';
+      
+      // Simple MIME type detection
+      if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.svg'].includes(ext)) {
+        if (ext === '.jpg' || ext === '.jpeg') {
+          mimeType = 'image/jpeg';
+        } else if (ext === '.png') {
+          mimeType = 'image/png';
+        } else if (ext === '.gif') {
+          mimeType = 'image/gif';
+        } else if (ext === '.webp') {
+          mimeType = 'image/webp';
+        } else if (ext === '.bmp') {
+          mimeType = 'image/bmp';
+        } else if (ext === '.tiff' || ext === '.tif') {
+          mimeType = 'image/tiff';
+        } else if (ext === '.svg') {
+          mimeType = 'image/svg+xml';
+        }
+      } else if (['.pdf', '.doc', '.docx', '.txt', '.md', '.rtf'].includes(ext)) {
+        mimeType = ext === '.pdf' ? 'application/pdf' : 'text/plain';
+      } else if (['.js', '.ts', '.py', '.java', '.cpp', '.c', '.h', '.php', '.rb', '.go', '.rs'].includes(ext)) {
+        mimeType = 'text/plain';
+      }
+      
+      const fileData = {
+        base64: fileBuffer.toString('base64'),
+        mimeType: mimeType,
+        size: fileBuffer.length
+      };
+      fileDataArray.push(fileData);
+      totalSize += fileData.size;
+    } catch (error) {
+      console.log(chalk.red(`Error loading file ${filePath}: ${error.message}`));
+    }
+  }
+  
+  if (fileDataArray.length === 0) {
+    console.log(chalk.red('No files could be loaded'));
+    return null;
+  }
+  
+  if (fileDataArray.length === 1) {
+    return fileDataArray[0];
+  } else {
+    console.log(chalk.blue(`✓ Loaded ${fileDataArray.length} files (total: ${(totalSize / 1024).toFixed(1)} KB)`));
+    return fileDataArray;
+  }
+}
+
+// Extract text from different document types
+async function extractTextFromDocument(fileBuffer, mimeType) {
+  try {
+    // Load document parsers if needed
+    await loadDocumentParsers();
+    
+    // Handle different document types
+    if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+        mimeType === 'application/msword') {
+      // Word documents
+      if (!mammoth) {
+        throw new Error('mammoth library not available');
+      }
+      const result = await mammoth.extractRawText({ buffer: fileBuffer });
+      return result.value;
+    } else if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+               mimeType === 'application/vnd.ms-excel') {
+      // Excel files
+      if (!XLSX) {
+        throw new Error('xlsx library not available');
+      }
+      const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      let text = '';
+      
+      // Extract text from all sheets
+      for (const sheetName of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        text += `Sheet: ${sheetName}\n`;
+        for (const row of jsonData) {
+          if (row && row.length > 0) {
+            text += row.join('\t') + '\n';
+          }
+        }
+        text += '\n';
+      }
+      return text;
+    } else if (mimeType === 'application/pdf') {
+      // PDF files
+      if (!pdf) {
+        throw new Error('pdf-parse library not available');
+      }
+      const data = await pdf(fileBuffer);
+      return data.text;
+    } else {
+      // For other text files, just decode as UTF-8
+      return fileBuffer.toString('utf8');
+    }
+  } catch (error) {
+    console.log(chalk.yellow(`Warning: Could not extract text from document: ${error.message}`));
+    return `[Document content could not be extracted: ${error.message}]`;
+  }
+}
+
+// Fuzzy search filter function
+function fuzzySearch(query, items) {
+  if (!query || query.trim() === '') return items;
+  
+  const searchTerm = query.toLowerCase();
+  return items.filter(item => {
+    const itemName = item.name.toLowerCase();
+    return itemName.includes(searchTerm);
+  });
+}
+
+// Ask user for a prompt about the files
+async function getFilePrompt(fileDataArray) {
+  const fileNames = fileDataArray.map((_, index) => `File ${index + 1}`).join(', ');
+  
+  const promptAnswer = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'prompt',
+      message: `What would you like to ask about ${fileNames}?`,
+      default: 'Please analyze these files and tell me what you see.'
+    }
+  ]);
+  
+  return promptAnswer.prompt;
+}
+
+// Process a question with attached files
+async function processQuestionWithFiles(question, fileDataArray) {
+  try {
+    // Add question to history
+    messageHistory.push({ role: 'user', content: question });
+    
+    // Display the question
+    console.log(formatUserMessage(question));
+    
+    const spinner = ora(`Analyzing ${fileDataArray.length} file(s)...`).start();
+    let response = '';
+    
+    // Handle different file types properly
+    const fileContents = await Promise.all(fileDataArray.map(async fileData => {
+      const isTextFile = fileData.mimeType.startsWith('text/') || 
+                        fileData.mimeType === 'application/javascript' ||
+                        fileData.mimeType === 'application/typescript' ||
+                        fileData.mimeType === 'text/x-python' ||
+                        fileData.mimeType === 'text/x-java-source' ||
+                        fileData.mimeType === 'text/x-c++src' ||
+                        fileData.mimeType === 'application/x-httpd-php' ||
+                        fileData.mimeType === 'text/x-ruby' ||
+                        fileData.mimeType === 'text/x-go' ||
+                        fileData.mimeType === 'text/x-rust' ||
+                        fileData.mimeType === 'text/x-swift' ||
+                        fileData.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                        fileData.mimeType === 'application/msword' ||
+                        fileData.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                        fileData.mimeType === 'application/vnd.ms-excel' ||
+                        fileData.mimeType === 'application/pdf' ||
+                        fileData.mimeType === 'application/rtf';
+      
+              if (isTextFile) {
+          // For text files, extract text properly based on file type
+          const fileBuffer = Buffer.from(fileData.base64, 'base64');
+          const textContent = await extractTextFromDocument(fileBuffer, fileData.mimeType);
+          return {
+            type: 'text',
+            text: `File content:\n${textContent}`
+          };
+        } else {
+          // For images and other files, send as base64
+          return {
+            type: 'image_url',
+            image_url: {
+              url: `data:${fileData.mimeType};base64,${fileData.base64}`
+            }
+          };
+        }
+      }));
+    
+    // Build messages with files for each provider
+    switch (config.currentProvider) {
+      case 'openai':
+        if (!openai) {
+          throw new Error('OpenAI API key not set or invalid.');
+        }
+        
+        const openaiMessages = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant that can analyze files. Please describe what you see in each file and answer any questions about them.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              ...fileContents
+            ]
+          }
+        ];
+        
+        const openaiResponse = await openai.chat.completions.create({
+          model: config.models.openai,
+          messages: openaiMessages,
+          max_completion_tokens: 1500,
+          ...(!(config.models.openai && typeof config.models.openai === 'string' && config.models.openai.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
+        });
+        
+        response = openaiResponse.choices[0].message.content;
+        break;
+        
+      case 'anthropic':
+        if (!anthropic) {
+          throw new Error('Anthropic API key not set or invalid.');
+        }
+        
+        // Prepare content for Anthropic (handle text vs image files)
+        const anthropicContent = [
+          { type: 'text', text: question }
+        ];
+        
+        for (const fileData of fileDataArray) {
+          const isTextFile = fileData.mimeType.startsWith('text/') || 
+                            fileData.mimeType === 'application/javascript' ||
+                            fileData.mimeType === 'application/typescript' ||
+                            fileData.mimeType === 'text/x-python' ||
+                            fileData.mimeType === 'text/x-java-source' ||
+                            fileData.mimeType === 'text/x-c++src' ||
+                            fileData.mimeType === 'application/x-httpd-php' ||
+                            fileData.mimeType === 'text/x-ruby' ||
+                            fileData.mimeType === 'text/x-go' ||
+                            fileData.mimeType === 'text/x-rust' ||
+                            fileData.mimeType === 'text/x-swift' ||
+                            fileData.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                            fileData.mimeType === 'application/msword' ||
+                            fileData.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                            fileData.mimeType === 'application/vnd.ms-excel' ||
+                            fileData.mimeType === 'application/pdf' ||
+                            fileData.mimeType === 'application/rtf';
+          
+          if (isTextFile) {
+            const textContent = Buffer.from(fileData.base64, 'base64').toString('utf8');
+            anthropicContent.push({ 
+              type: 'text', 
+              text: `File content:\n${textContent}` 
+            });
+          } else {
+            anthropicContent.push({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: fileData.mimeType,
+                data: fileData.base64
+              }
+            });
+          }
+        }
+        
+        const anthropicResponse = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 1500,
+          system: 'You are a helpful AI assistant that can analyze files. Please describe what you see in each file and answer any questions about them.',
+          messages: [
+            {
+              role: 'user',
+              content: anthropicContent
+            }
+          ]
+        });
+        
+        response = anthropicResponse.content[0].text;
+        break;
+        
+      case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid.');
+        }
+        
+        const googleModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+        
+        // Prepare content for Google (handle text vs image files)
+        const googleContent = [question];
+        
+        for (const fileData of fileDataArray) {
+          const isTextFile = fileData.mimeType.startsWith('text/') || 
+                            fileData.mimeType === 'application/javascript' ||
+                            fileData.mimeType === 'application/typescript' ||
+                            fileData.mimeType === 'text/x-python' ||
+                            fileData.mimeType === 'text/x-java-source' ||
+                            fileData.mimeType === 'text/x-c++src' ||
+                            fileData.mimeType === 'application/x-httpd-php' ||
+                            fileData.mimeType === 'text/x-ruby' ||
+                            fileData.mimeType === 'text/x-go' ||
+                            fileData.mimeType === 'text/x-rust' ||
+                            fileData.mimeType === 'text/x-swift' ||
+                            fileData.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                            fileData.mimeType === 'application/msword' ||
+                            fileData.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                            fileData.mimeType === 'application/vnd.ms-excel' ||
+                            fileData.mimeType === 'application/pdf' ||
+                            fileData.mimeType === 'application/rtf';
+          
+          if (isTextFile) {
+            const textContent = Buffer.from(fileData.base64, 'base64').toString('utf8');
+            googleContent.push(`File content:\n${textContent}`);
+          } else {
+            googleContent.push({
+              inlineData: {
+                data: fileData.base64,
+                mimeType: fileData.mimeType
+              }
+            });
+          }
+        }
+        
+        const googleResponse = await googleModel.generateContent(googleContent);
+        
+        response = googleResponse.response.text();
+        break;
+        
+      case 'openrouter':
+        if (!openrouter) {
+          throw new Error('OpenRouter API key not set or invalid.');
+        }
+        
+        const openrouterResponse = await openrouter.chat.completions.create({
+          model: 'deepseek/deepseek-chat',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a helpful AI assistant that can analyze files. Please describe what you see in each file and answer any questions about them.'
+            },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: question },
+                ...fileContents
+              ]
+            }
+          ],
+          max_tokens: 1500,
+          temperature: 0.7,
+        });
+        
+        response = openrouterResponse.choices[0].message.content;
+        break;
+        
+      default:
+        throw new Error(`Unsupported AI provider: ${config.currentProvider}`);
+    }
+    
+    spinner.succeed('Analysis complete');
+    
+    // Add response to history
+    messageHistory.push({ role: 'assistant', content: response });
+    
+    // Display the response
+    console.log(await formatAIResponse(response));
+    
+  } catch (error) {
+    console.log(chalk.red(`Error processing files: ${error.message}`));
+  }
+}
+
+// Process a question with multiple attached images
+async function processQuestionWithMultipleImages(question, imageDataArray) {
+  try {
+    // Add question to history
+    messageHistory.push({ role: 'user', content: question });
+    
+    // Display the question
+    console.log(formatUserMessage(question));
+    
+    const spinner = ora(`Analyzing ${imageDataArray.length} images...`).start();
+    let response = '';
+    
+    // Create image content array for different providers
+    const imageContents = imageDataArray.map(imageData => ({
+      type: 'image_url',
+      image_url: {
+        url: `data:${imageData.mimeType};base64,${imageData.base64}`
+      }
+    }));
+    
+    // Build messages with images for each provider
+    switch (config.currentProvider) {
+      case 'openai':
+        if (!openai) {
+          throw new Error('OpenAI API key not set or invalid.');
+        }
+        
+        const openaiMessages = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant that can analyze multiple images. Please describe what you see in each image and answer any questions about them.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              ...imageContents
+            ]
+          }
+        ];
+        
+        const openaiResponse = await openai.chat.completions.create({
+          model: 'gpt-4o', // Use GPT-4o for image analysis
+          messages: openaiMessages,
+          max_completion_tokens: 1500,
+          ...(!('gpt-4o' && typeof 'gpt-4o' === 'string' && 'gpt-4o'.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
+        });
+        
+        response = openaiResponse.choices[0].message.content;
+        break;
+        
+      case 'anthropic':
+        if (!anthropic) {
+          throw new Error('Anthropic API key not set or invalid.');
+        }
+        
+        const anthropicResponse = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022', // Use Claude 3.5 Sonnet for image analysis
+          max_tokens: 1500,
+          system: 'You are a helpful AI assistant that can analyze multiple images. Please describe what you see in each image and answer any questions about them.',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: question },
+                ...imageDataArray.map(imageData => ({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: imageData.mimeType,
+                    data: imageData.base64
+                  }
+                }))
+              ]
+            }
+          ]
+        });
+        
+        response = anthropicResponse.content[0].text;
+        break;
+        
+      case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid.');
+        }
+        
+        const googleModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+        
+        const googleResponse = await googleModel.generateContent([
+          question,
+          ...imageDataArray.map(imageData => ({
+            inlineData: {
+              data: imageData.base64,
+              mimeType: imageData.mimeType
+            }
+          }))
+        ]);
+        
+        response = googleResponse.response.text();
+        break;
+        
+      case 'openrouter':
+        if (!openRouter) {
+          throw new Error('OpenRouter API key not set or invalid.');
+        }
+        
+        const openRouterMessages = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant that can analyze multiple images. Please describe what you see in each image and answer any questions about them.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              ...imageContents
+            ]
+          }
+        ];
+        
+        const openRouterResponse = await openRouter.chat.completions.create({
+          model: 'openrouter/deepseek/deepseek-vision', // Use a vision model
+          messages: openRouterMessages,
+          max_tokens: 1500,
+          temperature: 0.7,
+        });
+        
+        response = openRouterResponse.choices[0].message.content;
+        break;
+        
+      default:
+        throw new Error(`Image analysis not supported for provider: ${config.currentProvider}. Please switch to OpenAI, Anthropic, Google, or OpenRouter.`);
+    }
+    
+    spinner.succeed(chalk.green(`Analysis of ${imageDataArray.length} images complete!`));
+    
+    // Add response to history
+    messageHistory.push({ role: 'assistant', content: response });
+    
+    // Display response
+    console.log(await formatAIResponse(response));
+    
+    // Add to input history
+    if (!inputHistory.includes(question)) {
+      inputHistory.push(question);
+      if (inputHistory.length > 50) {
+        inputHistory.shift();
+      }
+    }
+    
+  } catch (error) {
+    console.log(chalk.red(`Error processing images: ${error.message}`));
+  }
+}
+
+// Process a question with an attached image
+async function processQuestionWithImage(question, imageData) {
+  try {
+    // Add question to history
+    messageHistory.push({ role: 'user', content: question });
+    
+    // Display the question
+    console.log(formatUserMessage(question));
+    
+    const spinner = ora('Analyzing image...').start();
+    let response = '';
+    
+    // Create image content for different providers
+    const imageContent = {
+      type: 'image_url',
+      image_url: {
+        url: `data:${imageData.mimeType};base64,${imageData.base64}`
+      }
+    };
+    
+    // Build messages with image for each provider
+    switch (config.currentProvider) {
+      case 'openai':
+        if (!openai) {
+          throw new Error('OpenAI API key not set or invalid.');
+        }
+        
+        const openaiMessages = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant that can analyze images. Please describe what you see in the image and answer any questions about it.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              imageContent
+            ]
+          }
+        ];
+        
+        const openaiResponse = await openai.chat.completions.create({
+          model: 'gpt-4o', // Use GPT-4o for image analysis
+          messages: openaiMessages,
+          max_completion_tokens: 1000,
+          ...(!('gpt-4o' && typeof 'gpt-4o' === 'string' && 'gpt-4o'.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
+        });
+        
+        response = openaiResponse.choices[0].message.content;
+        break;
+        
+      case 'anthropic':
+        if (!anthropic) {
+          throw new Error('Anthropic API key not set or invalid.');
+        }
+        
+        const anthropicResponse = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022', // Use Claude 3.5 Sonnet for image analysis
+          max_tokens: 1000,
+          system: 'You are a helpful AI assistant that can analyze images. Please describe what you see in the image and answer any questions about it.',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: question },
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: imageData.mimeType,
+                    data: imageData.base64
+                  }
+                }
+              ]
+            }
+          ]
+        });
+        
+        response = anthropicResponse.content[0].text;
+        break;
+        
+      case 'google':
+        if (!genAI) {
+          throw new Error('Google API key not set or invalid.');
+        }
+        
+        const googleModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+        
+        const googleResponse = await googleModel.generateContent([
+          question,
+          {
+            inlineData: {
+              data: imageData.base64,
+              mimeType: imageData.mimeType
+            }
+          }
+        ]);
+        
+        response = googleResponse.response.text();
+        break;
+        
+      case 'openrouter':
+        if (!openRouter) {
+          throw new Error('OpenRouter API key not set or invalid.');
+        }
+        
+        const openRouterMessages = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant that can analyze images. Please describe what you see in the image and answer any questions about it.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              imageContent
+            ]
+          }
+        ];
+        
+        const openRouterResponse = await openRouter.chat.completions.create({
+          model: 'openrouter/deepseek/deepseek-vision', // Use a vision model
+          messages: openRouterMessages,
+          max_tokens: 1000,
+          ...(!('openrouter/deepseek/deepseek-vision' && typeof 'openrouter/deepseek/deepseek-vision' === 'string' && 'openrouter/deepseek/deepseek-vision'.startsWith('gpt-5')) ? { temperature: 0.7 } : {}),
+        });
+        
+        response = openRouterResponse.choices[0].message.content;
+        break;
+        
+      default:
+        throw new Error(`Image analysis not supported for provider: ${config.currentProvider}. Please switch to OpenAI, Anthropic, Google, or OpenRouter.`);
+    }
+    
+    spinner.succeed(chalk.green('Image analysis complete!'));
+    
+    // Add response to history
+    messageHistory.push({ role: 'assistant', content: response });
+    
+    // Display response
+    console.log(await formatAIResponse(response));
+    
+    // Add to input history
+    if (!inputHistory.includes(question)) {
+      inputHistory.push(question);
+      if (inputHistory.length > 50) {
+        inputHistory.shift();
+      }
+    }
+    
+  } catch (error) {
+    console.log(chalk.red(`Error processing image: ${error.message}`));
+  }
+}
+
 // Interactive chat mode
 async function startChatMode() {
   if (!quietStart) {
@@ -4685,6 +6876,9 @@ async function startChatMode() {
     console.log(chalk.yellow('In paste mode, type "\\end" or "/end" on a new line to finish pasting'));
     console.log(chalk.yellow('Use \\ at the end of a line + Enter for multi-line input'));
     console.log(chalk.yellow('Hotkeys: F8 copies last AI response to clipboard'));
+    console.log(chalk.yellow('Image upload: "\\image <path>" or "\\images" for multiple selection'));
+    console.log(chalk.yellow('File upload: "\\file <path>" or "\\files" for multiple selection'));
+    console.log(chalk.yellow('Keybindings: Press Ctrl+S + key for quick actions (see \\help for list)'));
   } else {
     console.log(chalk.green('<Connected>'));
   }
@@ -4922,6 +7116,134 @@ async function startChatMode() {
     
     let question = multilineInput.trim();
 
+    // Handle image upload commands
+    if (hasImageUploadTrigger(question)) {
+      const imageCommand = extractImageCommand(question);
+      const isMultiple = isMultipleImageRequest(question);
+      let imageData = null;
+      
+      if (imageCommand.trim()) {
+        // Direct file path provided
+        const resolvedPath = path.resolve(imageCommand.trim());
+        if (fs.existsSync(resolvedPath) && isImageFile(resolvedPath)) {
+          try {
+            imageData = await imageToBase64(resolvedPath);
+            console.log(chalk.green(`✓ Image loaded: ${path.basename(resolvedPath)} (${(imageData.size / 1024).toFixed(1)} KB)`));
+          } catch (error) {
+            console.log(chalk.red(`✗ Failed to load image: ${error.message}`));
+            continue;
+          }
+        } else {
+          console.log(chalk.red(`✗ Invalid image path: ${imageCommand.trim()}`));
+          continue;
+        }
+      } else {
+        // Interactive image selection
+        imageData = await handleImageUpload('', isMultiple);
+        if (!imageData) {
+          continue; // User cancelled
+        }
+      }
+      
+      // Remove the image command from the question and get the actual prompt
+      const cleanQuestion = question.replace(/\\image\s+.+/i, '').replace(/\\upload\s+.+/i, '').replace(/\\img\s+.+/i, '').replace(/\\images\s+.+/i, '').replace(/\\uploads\s+.+/i, '').trim();
+      
+      if (!cleanQuestion) {
+        console.log(chalk.yellow('Please provide a question or prompt along with the image(s).'));
+        continue;
+      }
+      
+      // Process the question with image(s)
+      if (Array.isArray(imageData)) {
+        await processQuestionWithMultipleImages(cleanQuestion, imageData);
+      } else {
+        await processQuestionWithImage(cleanQuestion, imageData);
+      }
+      continue;
+    }
+
+    // Handle file upload commands (all file types)
+    if (hasFileUploadTrigger(question)) {
+      const fileCommand = extractFileCommand(question);
+      const isMultiple = isMultipleFileRequest(question);
+      let fileData = null;
+      
+      if (fileCommand.trim()) {
+        // Direct file path provided
+        const resolvedPath = path.resolve(fileCommand.trim());
+        if (fs.existsSync(resolvedPath) && isSupportedFile(resolvedPath)) {
+          try {
+            // Convert file to base64 inline
+            const fileBuffer = fs.readFileSync(resolvedPath);
+            const ext = path.extname(resolvedPath).toLowerCase();
+            let mimeType = 'application/octet-stream';
+            
+            // Simple MIME type detection
+            if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.svg'].includes(ext)) {
+              if (ext === '.jpg' || ext === '.jpeg') {
+                mimeType = 'image/jpeg';
+              } else if (ext === '.png') {
+                mimeType = 'image/png';
+              } else if (ext === '.gif') {
+                mimeType = 'image/gif';
+              } else if (ext === '.webp') {
+                mimeType = 'image/webp';
+              } else if (ext === '.bmp') {
+                mimeType = 'image/bmp';
+              } else if (ext === '.tiff' || ext === '.tif') {
+                mimeType = 'image/tiff';
+              } else if (ext === '.svg') {
+                mimeType = 'image/svg+xml';
+              }
+            } else if (['.pdf', '.doc', '.docx', '.txt', '.md', '.rtf'].includes(ext)) {
+              mimeType = ext === '.pdf' ? 'application/pdf' : 'text/plain';
+            } else if (['.js', '.ts', '.py', '.java', '.cpp', '.c', '.h', '.php', '.rb', '.go', '.rs'].includes(ext)) {
+              mimeType = 'text/plain';
+            }
+            
+            fileData = {
+              base64: fileBuffer.toString('base64'),
+              mimeType: mimeType,
+              size: fileBuffer.length
+            };
+            console.log(chalk.green(`✓ File loaded: ${path.basename(resolvedPath)} (${(fileData.size / 1024).toFixed(1)} KB)`));
+          } catch (error) {
+            console.log(chalk.red(`✗ Failed to load file: ${error.message}`));
+            continue;
+          }
+        } else {
+          console.log(chalk.red(`✗ Invalid file path: ${fileCommand.trim()}`));
+          continue;
+        }
+      } else {
+        // Interactive file selection
+        fileData = await handleFileUpload('', isMultiple);
+        if (!fileData) {
+          continue; // User cancelled
+        }
+      }
+      
+      // Remove the file command from the question and get the actual prompt
+      let cleanQuestion = question.replace(/\\file\s+.+/i, '').replace(/\\files\s+.+/i, '').replace(/\\upload\s+.+/i, '').replace(/\\uploads\s+.+/i, '').trim();
+      
+      // If no prompt was provided, ask the user for one
+      if (!cleanQuestion) {
+        cleanQuestion = await getFilePrompt(Array.isArray(fileData) ? fileData : [fileData]);
+        if (!cleanQuestion) {
+          console.log(chalk.yellow('No prompt provided. Cancelling file upload.'));
+          continue;
+        }
+      }
+      
+      // Process the question with file(s)
+      if (Array.isArray(fileData)) {
+        await processQuestionWithFiles(cleanQuestion, fileData);
+      } else {
+        await processQuestionWithFiles(cleanQuestion, [fileData]);
+      }
+      continue;
+    }
+
     // Quick approval: if user typed yes and last assistant message has agent commands or code blocks, execute directly
     const yesRegex = /^(y|yes|yeah|sure|ok|okay|do it|please do it)\.?$/i;
     if (yesRegex.test(question) && messageHistory.length > 0) {
@@ -4968,7 +7290,7 @@ async function startChatMode() {
       
       // Display response if it doesn't contain agent commands
       if (!response.match(/(\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g)) {
-        console.log(formatAIResponse(response));
+        console.log(await formatAIResponse(response));
       }
       
       continue;
@@ -5441,6 +7763,21 @@ async function startChatMode() {
       console.log(chalk.yellow('- \\auto-scan [on|off] (alias: \\autoscan) - Toggle automatic local scan'));
       console.log(chalk.yellow('- \\visual, \\v - Open visual tri-pane (files | chat | preview). Inside: [V] toggle panes, [C] ask AI'));
       
+      console.log(chalk.cyan('\nImage Upload Commands:'));
+      console.log(chalk.yellow('- \\image <filepath> - Upload image with direct file path'));
+      console.log(chalk.yellow('- \\upload <filepath> - Upload image with direct file path (alias)'));
+      console.log(chalk.yellow('- \\img <filepath> - Upload image with direct file path (alias)'));
+      console.log(chalk.yellow('- \\images <filepath> - Upload multiple images with direct file path'));
+      console.log(chalk.yellow('- \\uploads <filepath> - Upload multiple images with direct file path (alias)'));
+      console.log(chalk.yellow('- \\image (no path) - Interactive single image file browser'));
+      console.log(chalk.yellow('- \\images (no path) - Interactive multiple image file browser'));
+      console.log(chalk.yellow('- \\upload (no path) - Interactive single image file browser (alias)'));
+      console.log(chalk.yellow('- \\uploads (no path) - Interactive multiple image file browser (alias)'));
+      console.log(chalk.yellow('- Supported formats: JPG, PNG, GIF, WebP, BMP, TIFF'));
+      console.log(chalk.yellow('- Examples: \\image ./screenshot.png "What do you see in this image?"'));
+      console.log(chalk.yellow('- Examples: \\images (then browse) "Compare these images"'));
+      console.log(chalk.yellow('- Examples: \\upload (then browse) "Analyze this diagram"'));
+      
       if (config.codingMode.enabled) {
         console.log(chalk.cyan('\nCoding Mode Commands:'));
         console.log(chalk.yellow('- \\compact, \\co - Summarize the current conversation to preserve context'));
@@ -5528,7 +7865,7 @@ async function startChatMode() {
           
           // Display response if it doesn't contain agent commands
           if (!response.match(/(\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g)) {
-            console.log(formatAIResponse(response));
+            console.log(await formatAIResponse(response));
           }
         }
       } catch (error) {
@@ -5568,7 +7905,7 @@ async function startChatMode() {
             const prompt = `Please review the following file and provide insights, issues, and suggestions.\n\nFile: ${res.path}\n\nContent:\n\n${data}`;
             // No explicit user echo; prompt already shows cwd
             const answer = await askAI(prompt);
-            console.log(formatAIResponse(answer));
+            console.log(await formatAIResponse(answer));
           } catch (e) {
             console.log(chalk.red(`Failed to read file: ${e.message}`));
           }
@@ -5578,7 +7915,7 @@ async function startChatMode() {
             const prompt = `You are editing a file. Apply the user's fix instruction to the code and respond ONLY with a tool_code block that writes the full updated file.\n\nInstruction: ${res.instruction}\n\nFile: ${res.path}\n\nCurrent content:\n\n${data}\n\nRespond in this exact format:\n\n\`\`\`tool_code\n{{agent:fs:write:${res.path}:<paste full updated file content here>}}\n\`\`\``;
             // No explicit user echo; prompt already shows cwd
             const answer = await askAI(prompt);
-            console.log(formatAIResponse(answer));
+            console.log(await formatAIResponse(answer));
           } catch (e) {
             console.log(chalk.red(`Failed to read file: ${e.message}`));
           }
@@ -5854,7 +8191,7 @@ async function startChatMode() {
       
       // Display response if it doesn't contain agent commands
       if (!response.match(/(\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g)) {
-        console.log(formatAIResponse(response));
+        console.log(await formatAIResponse(response));
       }
       
       continue;
@@ -6025,10 +8362,11 @@ async function startChatMode() {
       // Check if virtual environment is enabled
       const cmdPrefix = config.agent.useVirtualEnvironment ? 'docker run --rm alpine ' : '';
 
-      // Auto-approve unless dangerous or disabled
+      // Auto-approve only safe lookup commands unless dangerous or disabled
       const dangerous = nl?.danger || isDangerousExec(command);
+      const isSafeLookup = isSafeLookupCommand(command);
       let confirmed = true;
-      if (!(config.agent.autoApproveExec && !dangerous)) {
+      if (!(config.agent.autoApproveExec && isSafeLookup && !dangerous)) {
         const ans = await inquirer.prompt([
           {
             type: 'confirm',
@@ -6203,7 +8541,7 @@ async function startChatMode() {
           
           // Get new AI response after command execution
           const newResponse = await askAI(`I've executed the command "${command}" as you suggested. What's next?`);
-          console.log(formatAIResponse(newResponse));
+          console.log(await formatAIResponse(newResponse));
           
           continue;
         }
@@ -6266,7 +8604,7 @@ async function startChatMode() {
     // Only display the response if it doesn't contain agent commands
     // (if it has agent commands, it's already displayed in askAI)
     if (!response.match(/(\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g)) {
-      console.log(formatAIResponse(response));
+      console.log(await formatAIResponse(response));
       
       // In coding mode, update the conversation file with Q&A
       if (config.codingMode.enabled) {
@@ -6563,7 +8901,7 @@ async function configureProviderAndModel() {
   const modelChoices = {
     openai: ['gpt-5', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     anthropic: ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20240620', 'claude-3-opus-20240229'],
-    google: ['gemini-2.0-flash', 'gemini-2.5-pro-exp-03-25', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    google: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
     openrouter: ['deepseek/deepseek-r1:free', 'deepseek/deepseek-chat', 'anthropic/claude-3-opus-20240229', 'anthropic/claude-3-5-sonnet-20240620']
   };
 
@@ -6709,7 +9047,7 @@ async function configureAgentMode() {
     const lightModelChoices = {
       openai: ['gpt-5-mini', 'gpt-4o-mini', 'gpt-3.5-turbo'],
       anthropic: ['claude-3-haiku-20240307'],
-      google: ['gemini-2.0-flash-lite', 'gemini-1.5-flash-8b'],
+      google: ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b'],
       openrouter: ['deepseek/deepseek-r1:free']
     };
     
@@ -7139,4 +9477,128 @@ function directoryContainsFile(dirPath, searchPattern) {
     return false;
   }
 }
-      
+
+// ============================================================================
+// KEYBINDING SYSTEM
+// ============================================================================
+
+// Load keybindings from file or use defaults
+function loadKeybindings() {
+  try {
+    // Get the directory where this script is located
+    const scriptDir = __dirname;
+    const configPath = path.join(scriptDir, 'config.json');
+    const keybindingsPath = path.join(scriptDir, 'keybindings.json');
+    
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (config.keybindings && config.keybindings.enabled) {
+      const keybindingsFile = config.keybindings.keybindingsFile || 'keybindings.json';
+      const keybindingsFilePath = path.join(scriptDir, keybindingsFile);
+      if (fs.existsSync(keybindingsFilePath)) {
+        keybindings = JSON.parse(fs.readFileSync(keybindingsFilePath, 'utf8'));
+        console.log(chalk.green(`✓ Keybindings loaded from ${keybindingsFile}`));
+      } else {
+        // Use default keybindings
+        keybindings = {
+          prefixKey: 'ctrl-/',
+          keybindings: {
+            'f': { action: 'file_explorer', description: 'Open file explorer/selector for any file type', command: '\\file', mode: 'execute' },
+            'n': { action: 'navigate', description: 'Navigate to a new directory', command: '\\cd', mode: 'execute' },
+            ':': { action: 'execute', description: 'Execute terminal command', command: '\\exec', mode: 'execute' },
+            'h': { action: 'help', description: 'Show help information', command: '\\help', mode: 'execute' },
+            'm': { action: 'menu', description: 'Open settings menu', command: '\\menu', mode: 'execute' },
+            'c': { action: 'clear', description: 'Clear conversation history', command: '\\clear', mode: 'execute' },
+            'v': { action: 'visual', description: 'Toggle visual tri-pane mode', command: '\\visual', mode: 'toggle' },
+            't': { action: 'tui', description: 'Open TUI file browser', command: '\\tui', mode: 'execute' },
+            'p': { action: 'paste', description: 'Toggle paste mode', command: '\\paste', mode: 'toggle' },
+            'a': { action: 'agentic', description: 'Toggle agentic mode', command: '\\a', mode: 'toggle' },
+            'd': { action: 'direct', description: 'Send to powerful model directly', command: '\\d', mode: 'execute' },
+            'r': { action: 'review', description: 'Review current project', command: '\\review', mode: 'execute' },
+            's': { action: 'status', description: 'Show system status', command: '\\status', mode: 'execute' },
+            'w': { action: 'write', description: 'Write file operation', command: '\\fs write', mode: 'execute' },
+            'l': { action: 'list', description: 'List directory contents', command: '\\ls', mode: 'execute' },
+            'g': { action: 'grep', description: 'Search files with grep', command: '\\grep', mode: 'execute' },
+            'i': { action: 'image', description: 'Image-specific operations (legacy)', command: '\\image', mode: 'execute' },
+            'b': { action: 'browse', description: 'Browse files interactively', command: '\\browse', mode: 'execute' },
+            'u': { action: 'upload', description: 'Upload files (legacy)', command: '\\upload', mode: 'execute' }
+          }
+        };
+        console.log(chalk.yellow(`⚠️  Keybindings file not found, using defaults`));
+      }
+    } else {
+      console.log(chalk.gray(`Keybindings disabled in config`));
+    }
+  } catch (error) {
+    console.log(chalk.red(`✗ Error loading keybindings: ${error.message}`));
+  }
+}
+
+// Check if a key is the prefix key
+function isPrefixKey(key) {
+  try {
+    const scriptDir = __dirname;
+    const configPath = path.join(scriptDir, 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const prefixKey = config.keybindings?.prefixKey || 'ctrl-/';
+    return key.toLowerCase() === prefixKey.toLowerCase();
+  } catch (error) {
+    // Fallback to default prefix key if config can't be loaded
+    return key.toLowerCase() === 'ctrl-/';
+  }
+}
+
+// Handle keybinding after prefix key is pressed
+function handleKeybinding(key) {
+  if (!keybindings.keybindings[key]) {
+    console.log(chalk.red(`✗ Unknown keybinding: ${key}`));
+    return;
+  }
+
+  const binding = keybindings.keybindings[key];
+  console.log(chalk.blue(`🔧 Executing: ${binding.description}`));
+
+  if (binding.mode === 'toggle') {
+    // Toggle mode
+    modeStates[binding.action] = !modeStates[binding.action];
+    const status = modeStates[binding.action] ? 'ON' : 'OFF';
+    console.log(chalk.green(`✓ ${binding.action} mode: ${status}`));
+    
+    // Update current mode display
+    if (modeStates[binding.action]) {
+      currentMode = binding.action;
+    } else if (currentMode === binding.action) {
+      currentMode = 'normal';
+    }
+  } else {
+    // Execute command
+    processCommand(binding.command);
+  }
+}
+
+// Show available keybinding hints
+function showKeybindingHints() {
+  console.log(chalk.cyan('\n🎹 Available Keybindings (Ctrl+S + key):'));
+  console.log(chalk.gray('═'.repeat(60)));
+  
+  Object.entries(keybindings.keybindings).forEach(([key, binding]) => {
+    const modeIcon = binding.mode === 'toggle' ? '🔄' : '⚡';
+    const status = binding.mode === 'toggle' && modeStates[binding.action] ? ' [ON]' : '';
+    console.log(chalk.white(`${modeIcon} ${key.toUpperCase()}: ${binding.description}${status}`));
+  });
+  
+  console.log(chalk.gray('═'.repeat(60)));
+  console.log(chalk.yellow(`Current mode: ${currentMode.toUpperCase()}`));
+}
+
+// Process command (simplified version for keybindings)
+function processCommand(command) {
+  // This is a simplified version - in the full implementation,
+  // this would integrate with the existing command processing system
+  console.log(chalk.blue(`Executing command: ${command}`));
+  
+  // For now, just show what would be executed
+  // In the full implementation, this would call the appropriate command handler
+}
+
+// Initialize keybindings
+loadKeybindings();

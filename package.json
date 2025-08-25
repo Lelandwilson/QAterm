@@ -29,12 +29,14 @@
     "figlet": "^1.7.0",
     "gradient-string": "^2.0.2",
     "inquirer": "^9.2.12",
+    "mammoth": "^1.10.0",
     "openai": "^4.28.0",
     "ora": "^7.0.1",
-    "uuid": "^9.0.1"
+    "pdf-parse": "^1.1.1",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5"
   },
   "bin": {
     "qa": "./index.js"
   }
 }
-
