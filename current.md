@@ -1,11 +1,11 @@
 # Current Conversation
 
-Started: 2025-08-09T13:31:43.299Z
+Started: 2025-08-09T13:47:40.909Z
 
 
 ## User
-hey man how aree yoy today?
+how can i add a persistent env to zsh that i can inlcude in shell commands, for eaxample if i wanted to store an ip address and referr to it by name in an ssh command leik ssh $server
 
 ## Assistant
-Hey! I’m doing well—thanks for asking. How are you doing today? Anything I can help you with? If you want, I can also help run terminal commands or work with files.
+Processing your request with multiple AI agents in parallel...
 

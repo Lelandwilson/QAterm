@@ -33,5 +33,47 @@
     "created": 1754627348103,
     "completed": 1754627386047,
     "status": "completed"
+  },
+  {
+    "id": "da3f0b22-c045-47a7-bb76-737ecbf1a391",
+    "description": "dont run any commands, as this question is about another system (my server). i need to check and perhaps reset my git branch or upstream (or downstream) origin..",
+    "created": 1754747146710,
+    "completed": 1754747279528,
+    "status": "completed"
+  },
+  {
+    "id": "81abe574-d569-40e7-a9fd-a9dac4446e47",
+    "description": "how can i add a persistent env to zsh that i can inlcude in shell commands, for eaxample if i wanted to store an ip address and referr to it by name in an ssh command leik ssh $server",
+    "created": 1754782348051,
+    "completed": 1754782420609,
+    "status": "completed"
+  },
+  {
+    "id": "11692bf8-8738-471e-916f-49e23064674b",
+    "description": "what is the scp command i can run from my local computer that allows me to retrieve a particular file <file> from my remote server using scp /ssh?",
+    "created": 1754782901236,
+    "completed": 1754782915733,
+    "status": "completed"
+  },
+  {
+    "id": "54cc70ea-d18c-4008-b52b-36ee464e1d6b",
+    "description": "i have started an ssh session in tmux and i am worried my local pc will hiberbnate thus exiting the connectin and stopping the application i have running on the remote box. can i safely detach from this in a way that persists the connection?",
+    "created": 1754874568075,
+    "completed": 1754874631521,
+    "status": "completed"
+  },
+  {
+    "id": "22c7cbc6-628e-4252-a45d-3fe89278db47",
+    "description": "what is the stlye called for a game similar to vim-motions or pokemon, where it looks 3d for the persopective?",
+    "created": 1755925719126,
+    "completed": 1755925742498,
+    "status": "completed"
+  },
+  {
+    "id": "b1d86c86-c212-418e-a014-623894728143",
+    "description": "i recently updated my terminal on mac, it may be iterm2, but now i am confused. how can i check? is ther a terminal command i can run?",
+    "created": 1755926565285,
+    "completed": 1755926615212,
+    "status": "completed"
   }
 ]

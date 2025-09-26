@@ -3,7 +3,7 @@
   "models": {
     "openai": "gpt-5",
     "anthropic": "claude-3-7-sonnet-20250219",
-    "google": "gemini-2.5-flash",
+    "google": "gemini-2.5-pro",
     "openrouter": "deepseek/deepseek-chat"
   },
   "lightModels": {
@@ -24,7 +24,7 @@
   },
   "agent": {
     "enabled": true,
-    "useVirtualEnvironment": true,
+    "useVirtualEnvironment": false,
     "autoApproveExec": true,
     "autoApproveFsSafe": true,
     "allowedDirectories": [

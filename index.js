@@ -21,7 +21,7 @@ import ora from 'ora';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Anthropic } from '@anthropic-ai/sdk';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { Worker } from 'worker_threads';
 import { v4 as uuidv4 } from 'uuid';
 import { EventEmitter } from 'events';
@@ -3022,6 +3022,8 @@ function displayLogo() {
     const modes = [];
     modes.push(`Auto-scan: ${config?.autoActions?.localSearchBeforeAI ? chalk.green('On') : chalk.gray('Off')}`);
     modes.push(`Agentic: ${config?.agentic?.enabled ? chalk.green('On') : chalk.gray('Off')}`);
+    const fastOn = !!(config?.directMode?.enabled && config?.directMode?.skipReasoning);
+    modes.push(`Fast: ${fastOn ? chalk.green('On') : chalk.gray('Off')}`);
     modes.push(`Provider: ${chalk.yellow(config?.currentProvider || 'n/a')}`);
     console.log(chalk.gray(modes.join('  |  ')) + '\n');
   } catch {
@@ -3106,7 +3108,7 @@ function getLastUsedDirectory() {
 // Format AI responses for better terminal display
 async function formatAIResponse(text) {
   // Process tool_code blocks in AI responses
-  if (text.includes('```tool_code') && text.includes('{{agent:fs:write:')) {
+  if (!isFastModeActive() && text.includes('```tool_code') && text.includes('{{agent:fs:write:')) {
     await processToolCodeBlocks(text);
   }
 
@@ -3116,6 +3118,11 @@ async function formatAIResponse(text) {
   lastAIResponse = out;
   sessionTranscript.push(stripAnsi(out));
   return out;
+}
+
+// Fast mode helper
+function isFastModeActive() {
+  try { return !!(config?.directMode?.enabled && config?.directMode?.skipReasoning); } catch { return false; }
 }
 
 // Extract shell commands from fenced code blocks in assistant text
@@ -3141,15 +3148,16 @@ async function runShellCommandsSequentially(commands) {
       if (target === '~') target = os.homedir();
       if (target.startsWith('~/')) target = path.join(os.homedir(), target.slice(2));
       if (!path.isAbsolute(target)) target = path.resolve(currentWorkingDirectory, target);
-      if (!fs.existsSync(target)) {
-        try { fs.mkdirSync(target, { recursive: true }); } catch (e) { console.log(chalk.red(`Failed to create directory: ${e.message}`)); continue; }
+      if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+        console.log(chalk.red(`Directory does not exist: ${target}`));
+        continue;
       }
       currentWorkingDirectory = target;
       console.log(chalk.green(`Changed directory to: ${currentWorkingDirectory}`));
       continue;
     }
     try {
-      const cmdPrefix = config.agent.useVirtualEnvironment ? 'docker run --rm alpine ' : '';
+      const cmdPrefix = getExecPrefix();
       const result = await executeCommand(cmdPrefix + line);
       if (result.stdout) console.log(result.stdout);
       if (result.stderr) console.log(chalk.yellow(result.stderr));
@@ -3201,7 +3209,7 @@ async function handleStartNewProjectIntent(question) {
 }
 // Extract and execute agent commands from a text response (no prompts)
 async function executeAgentCommandsFromText(text, options = {}) {
-  const { autoCreateCdDir = true } = options;
+  const { autoCreateCdDir = false } = options;
   const singleCommandRegex = /(?:\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g;
   const commands = [];
   let m;
@@ -3232,20 +3240,16 @@ async function executeAgentCommandsFromText(text, options = {}) {
         if (target === '~') target = os.homedir();
         if (target.startsWith('~/')) target = path.join(os.homedir(), target.slice(2));
         if (!path.isAbsolute(target)) target = path.resolve(currentWorkingDirectory, target);
-        if (!fs.existsSync(target)) {
-          if (autoCreateCdDir) {
-            try { fs.mkdirSync(target, { recursive: true }); } catch (e) { console.log(chalk.red(`Failed to create directory: ${e.message}`)); continue; }
-          } else {
-            console.log(chalk.red(`Directory does not exist: ${target}`));
-            continue;
-          }
+        if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+          console.log(chalk.red(`Directory does not exist: ${target}`));
+          continue;
         }
         currentWorkingDirectory = target;
         console.log(chalk.green(`Changed directory to: ${currentWorkingDirectory}`));
         continue;
       }
       try {
-        const cmdPrefix = config.agent.useVirtualEnvironment ? 'docker run --rm alpine ' : '';
+        const cmdPrefix = getExecPrefix();
         const result = await executeCommand(cmdPrefix + c.cmd);
         if (result.stderr) {
           console.log(chalk.yellow(result.stderr));
@@ -3409,27 +3413,13 @@ function isDangerousExec(command) {
 
 function isSafeLookupCommand(command) {
   const c = (command || '').toLowerCase().trim();
-  
-  // Define safe lookup commands that can be executed automatically
-  const safeCommands = [
-    'ls', 'ls -la', 'ls -l', 'ls -a', 'ls -la', 'ls -lah',
-    'grep', 'grep -r', 'grep -i', 'grep -n', 'grep -l', 'grep -v',
-    'rg', 'rg -i', 'rg -n', 'rg -l', 'rg -v', 'rg -r',
-    'find', 'find .', 'find . -name', 'find . -type',
-    'cat', 'head', 'tail', 'wc', 'wc -l', 'wc -w', 'wc -c',
-    'pwd', 'whoami', 'date', 'uptime', 'ps', 'ps aux',
-    'df', 'df -h', 'du', 'du -h', 'du -sh',
-    'file', 'stat', 'which', 'whereis', 'type',
-    'echo', 'echo $PATH', 'echo $HOME',
-    'env', 'printenv', 'set'
-  ];
-  
-  // Check if the command starts with any safe command
-  return safeCommands.some(safeCmd => {
-    const safeCmdLower = safeCmd.toLowerCase();
-    return c.startsWith(safeCmdLower) && 
-           (c.length === safeCmdLower.length || c[safeCmdLower.length] === ' ');
-  });
+  // Strict whitelist: only simple read/print and navigation
+  if (c === 'ls' || c.startsWith('ls ')) return true;
+  if (c === 'pwd') return true;
+  if (c.startsWith('cat ')) return true;
+  if (c.startsWith('find ')) return true;
+  if (c.startsWith('cd ')) return true;
+  return false;
 }
 
 function executeCommand(command, useTerminalMode = false) {
@@ -3504,6 +3494,33 @@ function executeCommand(command, useTerminalMode = false) {
       });
     });
   });
+}
+
+// Determine exec prefix for virtualized execution (Docker), with graceful fallback
+let __dockerChecked = false;
+let __dockerAvailable = false;
+let __dockerWarned = false;
+function getExecPrefix() {
+  if (!config?.agent?.useVirtualEnvironment) return '';
+  if (!__dockerChecked) {
+    __dockerChecked = true;
+    try {
+      execSync('docker --version', { stdio: 'ignore' });
+      __dockerAvailable = true;
+    } catch {
+      __dockerAvailable = false;
+    }
+  }
+  if (!__dockerAvailable) {
+    if (!__dockerWarned && !quietStart) {
+      __dockerWarned = true;
+      console.log(chalk.yellow('Virtual environment requested but Docker not found. Running commands on host shell.'));
+    }
+    return '';
+  }
+  // Note: This is a minimal container run and does not mount the project directory.
+  // For true sandboxing, extend to mount CWD read-only with explicit bindings.
+  return 'docker run --rm alpine ';
 }
 
 // Translate simple natural language instructions to shell commands
@@ -4418,40 +4435,48 @@ async function askAI(question, options = {}) {
     }
     
     // Build system instructions including agent capabilities if enabled
-    const agentInstructions = config.agent.enabled ? 
-      `You can suggest file system or terminal operations by using {{agent:fs:operation:path[:content]}} or {{agent:exec:command}} syntax. The user will be asked for permission before executing any command. File operations include: read, write, list, exists.
-      
-      FILE CREATION CAPABILITIES:
-      - You can create any type of file when requested by the user
-      - For code files: Create complete, working scripts with proper syntax and structure
-      - For text files: Create well-formatted documents, README files, configuration files, etc.
-      - For data files: Create JSON, CSV, YAML, or other structured data files
-      - For configuration files: Create .env, .gitignore, package.json, requirements.txt, etc.
-      - Always include proper file extensions and use appropriate syntax highlighting
-      - Create directories if needed using {{agent:exec:mkdir -p /path/to/directory}}
-      
-      IMAGE GENERATION CAPABILITIES:
-      - You can generate images when requested by the user
-      - Use {{agent:image:generate:prompt:output_path.png}} syntax for image generation
-      - Supported formats: PNG, JPG, WebP
-      - Available sizes: 1024x1024, 1792x1024, 1024x1792
-      - Available qualities: standard, hd
-      - Available styles: natural, vivid
-      - Images will be automatically saved to the specified path
-      - Example: {{agent:image:generate:A beautiful sunset over mountains:./images/sunset.png}}
-      
-      Examples:
-      - To read a file: {{agent:fs:read:/path/to/file.txt}}
-      - To list directory contents: {{agent:fs:list:/path/to/directory}}
-      - To check if file exists: {{agent:fs:exists:/path/to/file.txt}}
-      - To write to a file: {{agent:fs:write:/path/to/file.txt:Content to write}}
-      - To create a Python script: {{agent:fs:write:script.py:#!/usr/bin/env python3\n\n# Your Python code here}}
-      - To create a JSON config: {{agent:fs:write:config.json:{"key": "value"}}
-      - To create a README: {{agent:fs:write:README.md:# Project Title\n\nDescription here}}
-      - To generate an image: {{agent:image:generate:A futuristic robot:./robot.png}}
-      - To run a terminal command: {{agent:exec:ls -la}}
-      - To create a directory: {{agent:exec:mkdir -p /path/to/directory}}
-      ` : '';
+    let agentInstructions = '';
+    if (config.agent.enabled) {
+      if (isFastModeActive()) {
+        // Very limited in fast mode: read-only and existence/list checks. No exec, no writes, no images.
+        agentInstructions = `You are in Fast Answers mode with restricted capabilities.
+Only suggest safe file inspection operations using {{agent:fs:read:/path}}, {{agent:fs:list:/path}}, or {{agent:fs:exists:/path}}.
+Do NOT suggest any terminal execution commands (no {{agent:exec:...}}), file writes (no {{agent:fs:write:...}}), or image generation.`;
+      } else {
+        agentInstructions = `You can suggest file system or terminal operations by using {{agent:fs:operation:path[:content]}} or {{agent:exec:command}} syntax. The user will be asked for permission before executing any command. File operations include: read, write, list, exists.
+        
+        FILE CREATION CAPABILITIES:
+        - You can create any type of file when requested by the user
+        - For code files: Create complete, working scripts with proper syntax and structure
+        - For text files: Create well-formatted documents, README files, configuration files, etc.
+        - For data files: Create JSON, CSV, YAML, or other structured data files
+        - For configuration files: Create .env, .gitignore, package.json, requirements.txt, etc.
+        - Always include proper file extensions and use appropriate syntax highlighting
+        - Create directories if needed using {{agent:exec:mkdir -p /path/to/directory}}
+        
+        IMAGE GENERATION CAPABILITIES:
+        - You can generate images when requested by the user
+        - Use {{agent:image:generate:prompt:output_path.png}} syntax for image generation
+        - Supported formats: PNG, JPG, WebP
+        - Available sizes: 1024x1024, 1792x1024, 1024x1792
+        - Available qualities: standard, hd
+        - Available styles: natural, vivid
+        - Images will be automatically saved to the specified path
+        - Example: {{agent:image:generate:A beautiful sunset over mountains:./images/sunset.png}}
+        
+        Examples:
+        - To read a file: {{agent:fs:read:/path/to/file.txt}}
+        - To list directory contents: {{agent:fs:list:/path/to/directory}}
+        - To check if file exists: {{agent:fs:exists:/path/to/file.txt}}
+        - To write to a file: {{agent:fs:write:/path/to/file.txt:Content to write}}
+        - To create a Python script: {{agent:fs:write:script.py:#!/usr/bin/env python3\n\n# Your Python code here}}
+        - To create a JSON config: {{agent:fs:write:config.json:{"key": "value"}}
+        - To create a README: {{agent:fs:write:README.md:# Project Title\n\nDescription here}}
+        - To generate an image: {{agent:image:generate:A futuristic robot:./robot.png}}
+        - To run a terminal command: {{agent:exec:ls -la}}
+        - To create a directory: {{agent:exec:mkdir -p /path/to/directory}}`;
+      }
+    }
     
     // Determine if we should use lightweight model based on agent mode
     let useMainModel = true;
@@ -4748,7 +4773,7 @@ async function askAI(question, options = {}) {
     const agentCommandRegex = /(\{\{agent:(fs|exec):(.+?)\}\}|\(Executed: (.+?)\))/g;
     let hasAgentCommands = response.match(agentCommandRegex);
     
-    if (hasAgentCommands && config.agent.enabled) {
+    if (hasAgentCommands && config.agent.enabled && !isFastModeActive()) {
       // Add response to history temporarily
       messageHistory.push({ role: 'assistant', content: response });
       
@@ -4814,7 +4839,7 @@ async function askAI(question, options = {}) {
             }]);
             confirmed = ans.confirmed;
           }
-        } else if (!(cmd.commandType === 'exec' && config.agent.autoApproveExec && isSafeLookupCommand(cmd.command) && !isDangerousExec(cmd.command))) {
+        } else if (!(cmd.commandType === 'exec' && ((config.agent.autoApproveExec && !isFastModeActive())) && isSafeLookupCommand(cmd.command) && !isDangerousExec(cmd.command))) {
           const ans = await inquirer.prompt([{
             type: 'confirm',
             name: 'confirmed',
@@ -4870,14 +4895,14 @@ async function askAI(question, options = {}) {
                 if (target === '~') target = os.homedir();
                 if (target.startsWith('~/')) target = path.join(os.homedir(), target.slice(2));
                 if (!path.isAbsolute(target)) target = path.resolve(currentWorkingDirectory, target);
-                if (!fs.existsSync(target)) {
-                  try { fs.mkdirSync(target, { recursive: true }); } catch (e) { throw new Error(`Failed to create directory: ${e.message}`); }
+                if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+                  throw new Error(`Directory does not exist: ${target}`);
                 }
                 currentWorkingDirectory = target;
                 console.log(chalk.green(`Changed directory to: ${currentWorkingDirectory}`));
               } else {
                 // Check if virtual environment is enabled
-                const cmdPrefix = config.agent.useVirtualEnvironment ? 'docker run --rm alpine ' : '';
+                const cmdPrefix = getExecPrefix();
                 
                 console.log(chalk.blue('Executing command...'));
                 // Execute the command
@@ -7876,6 +7901,28 @@ async function startChatMode() {
     } else if (question.toLowerCase() === '\\menu' || question.toLowerCase() === '\\m') {
       await configureSettings();
       continue;
+    } else if (question.toLowerCase() === '\\direct' || question.toLowerCase() === '\\dr') {
+      // Toggle direct mode (always use powerful model); keep current skipReasoning setting
+      config.directMode = config.directMode || { enabled: false, skipReasoning: true };
+      config.directMode.enabled = !config.directMode.enabled;
+      saveConfig();
+      console.log(chalk.green(`Direct mode ${config.directMode.enabled ? 'ENABLED' : 'DISABLED'}${config.directMode.enabled ? (config.directMode.skipReasoning ? ' (fast)' : '') : ''}.`));
+      continue;
+    } else if (question.toLowerCase() === '\\directfast' || question.toLowerCase() === '\\df') {
+      // Fast direct mode: enable direct mode and disable reasoning
+      config.directMode = config.directMode || { enabled: false, skipReasoning: true };
+      if (config.directMode.enabled && config.directMode.skipReasoning) {
+        // If already in fast direct, toggle off
+        config.directMode.enabled = false;
+        console.log(chalk.green('Fast direct mode DISABLED.'));
+      } else {
+        config.directMode.enabled = true;
+        config.directMode.skipReasoning = true;
+        if (config.reasoningMode) config.reasoningMode.enabled = false;
+        console.log(chalk.green('Fast direct mode ENABLED (reasoning disabled).'));
+      }
+      saveConfig();
+      continue;
     } else if (/^\\(auto-scan|autoscan)\b/i.test(question)) {
       const m = question.match(/^\\(auto-scan|autoscan)\b\s*(on|off|enable|disable|true|false)?/i);
       let newVal;
@@ -8360,13 +8407,14 @@ async function startChatMode() {
       const command = nl ? nl.cmd : rawArg;
       
       // Check if virtual environment is enabled
-      const cmdPrefix = config.agent.useVirtualEnvironment ? 'docker run --rm alpine ' : '';
+      const cmdPrefix = getExecPrefix();
 
       // Auto-approve only safe lookup commands unless dangerous or disabled
       const dangerous = nl?.danger || isDangerousExec(command);
       const isSafeLookup = isSafeLookupCommand(command);
       let confirmed = true;
-      if (!(config.agent.autoApproveExec && isSafeLookup && !dangerous)) {
+      const effectiveAutoApprove = (config.agent.autoApproveExec && !isFastModeActive());
+      if (!(effectiveAutoApprove && isSafeLookup && !dangerous)) {
         const ans = await inquirer.prompt([
           {
             type: 'confirm',
@@ -8621,16 +8669,28 @@ program
   .name('qa')
   .description('QA - Terminal AI Assistant with multi-provider support, coding assistance, and agentic parallel execution')
   .version('1.0.0')
-  .option('--qs, --quiet-start', 'Quiet start (suppress banner and startup messages)');
+  .option('--qs, --quiet-start', 'Quiet start (suppress banner and startup messages)')
+  .option('--fa, --fast-answers', 'Fast answers: skip reasoning and prefer direct answers');
 
 // Enrich CLI help output with examples and notes
-program.addHelpText('after', `\nExamples:\n  $ qa --qs\n  $ qa --quiet-start\n  $ qa settings\n\nNotes:\n  - Inside chat, commands start with \\ (backslash). Forward-slash / is supported but deprecated.\n  - Paste mode: type \\p, finish with \\end (Windows: Ctrl+Z then Enter).\n  - Agentic: prefix a single query with \\a (or \\agent, \\agentic).\n  - Exec: use \\e or \\exec to run commands; common natural-language ops are translated (e.g.,\n    "make a new directory ~/Documents/testabc", "open terminal here",\n    "zip each of src docs", "replace 'old' with 'new' in files matching *.js under ./src").\n`);
+program.addHelpText('after', `\nExamples:\n  $ qa --qs\n  $ qa --quiet-start\n  $ qa --qs --fa    # quiet + fast answers (no reasoning)\n  $ qa settings\n\nNotes:\n  - Inside chat, commands start with \\ (backslash). Forward-slash / is supported but deprecated.\n  - Fast answers can also be toggled with \\directfast (alias: \\df).\n  - Paste mode: type \\p, finish with \\end (Windows: Ctrl+Z then Enter).\n  - Agentic: prefix a single query with \\a (or \\agent, \\agentic).\n  - Exec: use \\e or \\exec to run commands; common natural-language ops are translated (e.g.,\n    "make a new directory ~/Documents/testabc", "open terminal here",\n    "zip each of src docs", "replace 'old' with 'new' in files matching *.js under ./src").\n`);
 
 // Default command starts chat mode
 program
   .action(async () => {
     // Load configuration
     loadConfig();
+    // Apply fast-answers flag, if provided
+    const opts = program.opts();
+    if (opts.fastAnswers) {
+      try {
+        if (!config.directMode) config.directMode = { enabled: true, skipReasoning: true };
+        config.directMode.enabled = true;
+        config.directMode.skipReasoning = true;
+        if (config.reasoningMode) config.reasoningMode.enabled = false;
+        if (!quietStart) console.log(chalk.magenta('Fast Answers: Enabled (reasoning disabled)'));
+      } catch {}
+    }
     await startChatMode();
   });
 
