@@ -4537,7 +4537,8 @@ Do NOT suggest any terminal execution commands (no {{agent:exec:...}}), file wri
           }))
         ];
         
-        const model = useMainModel ? config.models.openai : config.lightModels.openai;
+        const __fast = isFastModeActive();
+        const model = __fast ? config.lightModels.openai : (useMainModel ? config.models.openai : config.lightModels.openai);
         
         // Set up cancellation for this request
         isAICancelled = false;
@@ -4578,7 +4579,8 @@ Do NOT suggest any terminal execution commands (no {{agent:exec:...}}), file wri
             content: msg.content
           }));
         
-        const anthropicModel = useMainModel ? config.models.anthropic : config.lightModels.anthropic;
+        const __fastA = isFastModeActive();
+        const anthropicModel = __fastA ? config.lightModels.anthropic : (useMainModel ? config.models.anthropic : config.lightModels.anthropic);
         
         const anthropicResponse = await anthropic.messages.create({
           model: anthropicModel,
@@ -4607,7 +4609,8 @@ Do NOT suggest any terminal execution commands (no {{agent:exec:...}}), file wri
           )
         ].join('\n\n');
         
-        const googleModelName = useMainModel ? config.models.google : config.lightModels.google;
+        const __fastG = isFastModeActive();
+        const googleModelName = __fastG ? config.lightModels.google : (useMainModel ? config.models.google : config.lightModels.google);
         const googleModel = genAI.getGenerativeModel({ model: googleModelName });
         
         // Set up cancellation for this request (Google Gemini doesn't support signal parameter)
@@ -4648,7 +4651,8 @@ Do NOT suggest any terminal execution commands (no {{agent:exec:...}}), file wri
           }))
         ];
         
-        const openRouterModel = useMainModel ? config.models.openrouter : config.lightModels.openrouter;
+        const __fastOR = isFastModeActive();
+        const openRouterModel = __fastOR ? config.lightModels.openrouter : (useMainModel ? config.models.openrouter : config.lightModels.openrouter);
         
         const openRouterResponse = await openRouter.chat.completions.create({
           model: openRouterModel,
